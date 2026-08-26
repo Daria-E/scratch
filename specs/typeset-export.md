@@ -96,13 +96,22 @@ exportSettings?: {
 - PDF text-extraction of math glyphs is partially garbled (copy/search of formulas);
   visual output unaffected. Pre-existing in webview prints too.
 - RTL tables mirror column order (typographically conventional; revisit if unwanted).
-- `typst` crates add nontrivial binary size (O2).
+- Release binary grows 32.3 MB -> 86.7 MB. Measured split: ~44 MB typst compiler code
+  (includes `wasmi` — cmarker/mitex are WASM plugins — `hayagriva`, Unicode/ICU tables),
+  9.7 MB embedded fonts, 0.8 MB vendored packages. Accepted (O2).
 - cmarker/mitex pinned: upgrades are deliberate maintenance events with re-run of the
   PoC 2 fixture as regression test.
 
+## Decisions
+
+- O1: keep typst-assets embedded fonts (New Computer Modern etc.) for cross-platform
+  determinism of Latin and math; Hebrew comes from system fonts via the font fallback
+  chain. Do not bundle a Hebrew face.
+- O2: accept the binary size. Rejected: dropping embedded fonts (saves 9.7 MB, costs
+  math-font determinism), sidecar typst binary (same download, adds per-platform binary
+  management and a failure mode observed in the wild — Tideflow's sidecar segfaults).
+
 ## Open questions
 
-- O1: bundle a Hebrew-capable font vs rely on system fonts per platform.
-- O2: measure binary-size impact of embedded typst crates; acceptable ceiling.
 - O3: per-note frontmatter overrides for export settings (LyX-style per-document
   layout) — v2 candidate.

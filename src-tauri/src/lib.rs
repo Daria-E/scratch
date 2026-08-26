@@ -16,6 +16,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
+mod export;
 mod git;
 
 // Note metadata for list display
@@ -1812,6 +1813,19 @@ fn update_git_enabled(
     save_settings(&folder, &settings).map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+#[tauri::command]
+async fn export_pdf(markdown: String, path: String) -> Result<(), String> {
+    let bytes = tokio::task::spawn_blocking(move || {
+        export::markdown_to_pdf(&markdown, &export::ExportSettings::default())
+    })
+    .await
+    .map_err(|e| format!("Export task failed: {e}"))??;
+
+    fs::write(&path, bytes)
+        .await
+        .map_err(|e| format!("Failed to write PDF: {e}"))
 }
 
 #[tauri::command]
@@ -3875,6 +3889,7 @@ pub fn run() {
             update_git_enabled,
             preview_note_name,
             write_file,
+            export_pdf,
             search_notes,
             start_file_watcher,
             rebuild_search_index,
