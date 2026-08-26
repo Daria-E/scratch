@@ -9,12 +9,19 @@ import { invoke } from "@tauri-apps/api/core";
  * @param editor - The TipTap editor instance
  * @param _noteTitle - The note title (currently unused, but kept for API consistency)
  */
+function afterOverlaysRepaint(): Promise<void> {
+  return new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  );
+}
+
 export async function downloadPdf(
   editor: Editor,
   _noteTitle: string
 ): Promise<void> {
   if (!editor) throw new Error("Editor not available");
 
+  await afterOverlaysRepaint();
   window.print();
 }
 

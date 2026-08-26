@@ -1080,7 +1080,8 @@ table.not-prose th {
 
 /* Print styles for clean PDF export */
 @page {
-  margin: 0.75in;
+  size: A4;
+  margin: 20mm;
 }
 
 @media print {
@@ -1141,7 +1142,8 @@ table.not-prose th {
   .modal,
   .dialog,
   [role="dialog"],
-  [data-radix-portal],
+  .fixed,
+  [data-radix-popper-content-wrapper],
   nav,
   header,
   footer {
