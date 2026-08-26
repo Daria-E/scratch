@@ -606,6 +606,12 @@ html.dark {
   margin: 0;
 }
 
+/* math is LTR; isolate from RTL paragraphs or bidi mirroring flips U+2208 etc. */
+.prose .katex {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
 .prose .block-math-error {
   color: #dc2626;
   font-family: var(--font-mono);
