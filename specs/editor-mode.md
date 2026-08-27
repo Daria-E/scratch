@@ -83,6 +83,46 @@ autosave path (300 ms, `save_file_direct`) works unchanged and nothing is lost t
   on next launch.
 - Empty drafts older than 7 days are deleted at startup.
 
+## Images
+
+Image paste (`Editor.tsx:1362` → `save_clipboard_image`) and image insertion
+(`Editor.tsx:1922` → `copy_image_to_assets`) currently write into
+`<notes folder>/assets/` and are the only editor features that hard-fail without a
+folder. Both commands gain a target directory instead of resolving the notes folder
+themselves:
+
+- Saved file — images go to `<directory of the file>/assets/`.
+- Draft — images go to the draft's own directory under `{APP_DATA}/drafts/`.
+
+Saving a draft (`mod+S`) therefore has to move its assets too:
+
+1. Scan the markdown for image links that are relative and resolve inside the draft
+   directory. Absolute paths, `http(s):` and `data:` URLs are left untouched.
+2. Copy each referenced file once into `<target directory>/assets/`, suffixing the name
+   on collision.
+3. Rewrite those links to the new relative paths, then write the markdown to the target.
+4. If any copy fails, still save the document and report which images were left behind —
+   never lose the text over an asset.
+
+## Folder-dependent features
+
+Audited against a null notes folder. 30 backend commands require one; they sort into
+three groups.
+
+Unreachable from an editor window, so no work needed: notes CRUD (`list_notes`,
+`read_note`, `save_note`, `delete_note`, `create_note`), folder CRUD and moves,
+`import_file_to_folder`, `start_file_watcher`, `rebuild_search_index`, the nine git
+commands, and the AI executors. The command palette, AI modal, footer and sidebar are all
+rendered in App's folder-mode branch (`App.tsx:512`, `525`), and `Editor.tsx` uses no
+React context, so nothing folder-bound is mounted.
+
+Fixed by E1: `update_settings`, `update_git_enabled`.
+
+Fixed by E4: `save_clipboard_image`, `copy_image_to_assets` (see Images).
+
+Degrades on its own: wikilink autocomplete reads its note list from editor storage and
+returns no suggestions when absent (`WikilinkSuggestion.tsx:40`).
+
 ## Milestones
 
 - E1: settings become folder-optional — category split, `update_settings` no longer
@@ -91,15 +131,14 @@ autosave path (300 ms, `save_file_direct`) works unchanged and nothing is lost t
 - E2: app starts without a folder — `defaultWindow` setting, editor window opens to a
   draft, folder picker only when the notes window is requested.
 - E3: header menu — New, Open, Settings, Open notes folder.
-- E4: recents and drafts — app-config list, stale handling, draft save-as and recovery,
-  startup cleanup.
+- E4: recents, drafts and assets — app-config recents list with stale handling; draft
+  creation, save-as and recovery; startup cleanup; target-directory image commands and
+  asset migration on save.
 
 ## Known limits / risks
 
 - Editing an arbitrary file inherits Scratch's autosave: changes are written ~300 ms after
   typing, with no explicit save step. This already applies to preview windows today.
-- Folder-dependent features must degrade in editor windows: wikilink autocomplete, note
-  search commands, git status, note-name templates. Each needs an audit for a null folder.
 - Opening many files from a file manager produces many windows.
 - Existing installs also default to `"editor"`; the notes window is one menu item away,
   but the first launch after upgrading will look different (accepted — no migration).
