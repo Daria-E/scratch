@@ -65,12 +65,14 @@ export async function downloadMarkdown(
  * @param markdown - The markdown content to typeset
  * @param noteTitle - The note title for the default filename
  * @param settings - Page and typography settings, or undefined for defaults
+ * @param notePath - Path of the source note, used to resolve relative image paths
  * @returns Promise<boolean> - Returns true if the PDF was written, false if user cancelled
  */
 export async function exportTypesetPdf(
   markdown: string,
   noteTitle: string,
-  settings?: ExportSettings
+  settings?: ExportSettings,
+  notePath?: string
 ): Promise<boolean> {
   const filePath = await save({
     defaultPath: `${sanitizeFilename(noteTitle)}.pdf`,
@@ -79,7 +81,7 @@ export async function exportTypesetPdf(
 
   if (!filePath) return false;
 
-  await invoke("export_pdf", { markdown, path: filePath, settings });
+  await invoke("export_pdf", { markdown, path: filePath, settings, notePath });
 
   return true;
 }

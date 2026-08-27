@@ -38,6 +38,7 @@ typst-pdf = "0.15"
 typst-kit = { version = "0.15", features = ["embedded-fonts", "scan-fonts"] }
 include_dir = "0.7.4"
 typst-layout = "0.15"
+pulldown-cmark = { version = "0.13.4", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-foundation = { version = "0.3", features = ["NSUserDefaults", "NSString"] }

@@ -18,6 +18,7 @@ use tokio::io::AsyncWriteExt;
 
 mod export;
 mod git;
+mod preprocess;
 
 // Note metadata for list display
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1817,15 +1818,33 @@ fn update_git_enabled(
     Ok(())
 }
 
+fn image_search_dirs(state: &State<AppState>, note_path: Option<&str>) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(dir) = note_path
+        .map(Path::new)
+        .and_then(|p| p.parent())
+        .map(Path::to_path_buf)
+    {
+        dirs.push(dir);
+    }
+    if let Some(folder) = state.app_config.read().unwrap().notes_folder.clone() {
+        dirs.push(PathBuf::from(folder));
+    }
+    dirs
+}
+
 #[tauri::command]
 async fn export_pdf(
     markdown: String,
     path: String,
     settings: Option<export::ExportSettings>,
+    note_path: Option<String>,
+    state: State<'_, AppState>,
 ) -> Result<(), String> {
     let settings = settings.unwrap_or_default();
+    let search_dirs = image_search_dirs(&state, note_path.as_deref());
     let bytes = tokio::task::spawn_blocking(move || {
-        export::markdown_to_pdf(&markdown, &settings)
+        export::markdown_to_pdf(&markdown, &settings, &search_dirs)
     })
     .await
     .map_err(|e| format!("Export task failed: {e}"))??;

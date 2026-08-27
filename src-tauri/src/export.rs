@@ -1,6 +1,8 @@
 use include_dir::{include_dir, Dir};
 use serde::{Deserialize, Serialize};
+use crate::preprocess::{self, Prepared};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use typst::diag::{FileError, FileResult};
 use typst::foundations::{Bytes, Datetime, Duration};
 use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
@@ -13,7 +15,7 @@ use typst_layout::PagedDocument;
 static ASSETS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/assets/export");
 
 const TEMPLATE: &str = "main.typ";
-const NOTE: &str = "note.md";
+const BLOCKS: &str = "blocks.json";
 const SETTINGS: &str = "settings.json";
 
 const FALLBACK_FONTS: [&str; 4] = [
@@ -102,7 +104,7 @@ struct ExportWorld {
 }
 
 impl ExportWorld {
-    fn new(markdown: &str, settings: &TemplateSettings) -> Result<Self, String> {
+    fn new(prepared: &Prepared, settings: &TemplateSettings) -> Result<Self, String> {
         let template = ASSETS
             .get_file("template.typ")
             .and_then(|f| f.contents_utf8())
@@ -115,12 +117,15 @@ impl ExportWorld {
         let settings_json =
             serde_json::to_string(settings).map_err(|e| format!("bad export settings: {e}"))?;
 
+        let blocks_json = serde_json::to_string(&prepared.blocks)
+            .map_err(|e| format!("bad block list: {e}"))?;
+
         let mut bytes = HashMap::new();
-        bytes.insert(
-            project_id(NOTE)?,
-            Bytes::new(markdown.as_bytes().to_vec()),
-        );
+        bytes.insert(project_id(BLOCKS)?, Bytes::new(blocks_json.into_bytes()));
         bytes.insert(project_id(SETTINGS)?, Bytes::new(settings_json.into_bytes()));
+        for (path, data) in &prepared.images {
+            bytes.insert(project_id(path)?, Bytes::new(data.clone()));
+        }
 
         let mut fonts = FontStore::new();
         fonts.extend(typst_kit::fonts::embedded());
@@ -206,8 +211,14 @@ fn join_messages<T: std::fmt::Display>(errors: impl IntoIterator<Item = T>) -> S
         .join("; ")
 }
 
-pub fn markdown_to_pdf(markdown: &str, settings: &ExportSettings) -> Result<Vec<u8>, String> {
-    let world = ExportWorld::new(markdown, &settings.to_template(markdown))?;
+pub fn markdown_to_pdf(
+    markdown: &str,
+    settings: &ExportSettings,
+    search_dirs: &[PathBuf],
+) -> Result<Vec<u8>, String> {
+    let template_settings = settings.to_template(markdown);
+    let prepared = preprocess::prepare(markdown, &template_settings.dir, search_dirs);
+    let world = ExportWorld::new(&prepared, &template_settings)?;
 
     let document = typst::compile::<PagedDocument>(&world)
         .output
@@ -229,7 +240,7 @@ mod tests {
             direction: Some("rtl".into()),
             ..Default::default()
         };
-        let pdf = markdown_to_pdf(FIXTURE, &settings).expect("compile fixture");
+        let pdf = markdown_to_pdf(FIXTURE, &settings, &[]).expect("compile fixture");
         assert!(pdf.starts_with(b"%PDF"));
         std::fs::write(
             std::env::temp_dir().join("scratch-export-test.pdf"),
@@ -247,6 +258,7 @@ mod tests {
                 page_numbers: Some(false),
                 ..Default::default()
             },
+            &[],
         )
         .expect("compile letter");
         assert!(letter.starts_with(b"%PDF"));
@@ -275,8 +287,78 @@ mod tests {
                     paper_size: Some(ui.into()),
                     ..Default::default()
                 },
+                &[],
             );
             assert!(pdf.is_ok(), "paper {ui} failed: {:?}", pdf.err());
         }
+    }
+
+    #[test]
+    fn mixed_direction_note_keeps_each_block_in_its_own_direction() {
+        let source = "# Test note\n\nLet $x \\in \\mathbb{R}$ be given.\n\nואם אני כותבת בעברית? יהי $x > y$. אוקי זה בסדר.\n";
+        let prepared = crate::preprocess::prepare(source, "ltr", &[]);
+        let dirs: Vec<&str> = prepared.blocks.iter().map(|b| b.dir.as_str()).collect();
+        assert_eq!(dirs, vec!["ltr", "ltr", "rtl"]);
+
+        let pdf = markdown_to_pdf(source, &ExportSettings::default(), &[])
+            .expect("compile mixed-direction note");
+        assert!(pdf.starts_with(b"%PDF"));
+        std::fs::write(
+            std::env::temp_dir().join("scratch-export-mixed.pdf"),
+            &pdf,
+        )
+        .expect("write mixed pdf");
+    }
+
+    #[test]
+    fn uniform_note_renders_as_one_block() {
+        let prepared = crate::preprocess::prepare("# Title\n\nBody one.\n\nBody two.\n", "ltr", &[]);
+        assert_eq!(prepared.blocks.len(), 1);
+        assert_eq!(prepared.blocks[0].dir, "ltr");
+    }
+
+    #[test]
+    fn wikilinks_become_plain_text() {
+        let prepared = crate::preprocess::prepare("See [[Some Note]] here.", "ltr", &[]);
+        assert!(prepared.blocks[0].md.contains("See Some Note here."));
+        assert!(!prepared.blocks[0].md.contains("[["));
+    }
+
+    #[test]
+    fn missing_images_fall_back_to_alt_text() {
+        let prepared = crate::preprocess::prepare("![a diagram](assets/nope.png)", "ltr", &[]);
+        assert!(prepared.images.is_empty());
+        assert!(prepared.blocks[0].md.contains("a diagram"));
+        assert!(!prepared.blocks[0].md.contains("nope.png"));
+    }
+
+    #[test]
+    fn local_images_are_embedded_from_search_dirs() {
+        let dir = std::env::temp_dir().join("scratch-export-img-test");
+        std::fs::create_dir_all(dir.join("assets")).expect("create assets dir");
+        let png = [
+            0x89u8, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08,
+            0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D,
+            0xB0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+        std::fs::write(dir.join("assets/dot.png"), png).expect("write png");
+
+        let prepared = crate::preprocess::prepare(
+            "![a dot](assets/dot.png)",
+            "ltr",
+            std::slice::from_ref(&dir),
+        );
+        assert_eq!(prepared.images.len(), 1);
+        assert!(prepared.blocks[0].md.contains("images/0.png"));
+
+        let pdf = markdown_to_pdf(
+            "Before.\n\n![a dot](assets/dot.png)\n\nAfter.",
+            &ExportSettings::default(),
+            std::slice::from_ref(&dir),
+        )
+        .expect("compile with image");
+        assert!(pdf.starts_with(b"%PDF"));
     }
 }

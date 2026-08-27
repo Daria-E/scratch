@@ -332,7 +332,8 @@ export function CommandPalette({
               const saved = await exportTypesetPdf(
                 markdown,
                 currentNote.title,
-                exportSettings
+                exportSettings,
+                currentNote.path
               );
               if (saved) {
                 toast.success("PDF exported successfully");
