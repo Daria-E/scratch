@@ -42,6 +42,84 @@ pub fn prepare(markdown: &str, default_dir: &str, search_dirs: &[PathBuf]) -> Pr
     Prepared { blocks, images }
 }
 
+pub struct AssetMigration {
+    pub markdown: String,
+    pub failed: Vec<String>,
+}
+
+// Copies draft-local images next to the saved file and rewrites their links.
+// A failed copy keeps the original link; the document itself must always save.
+pub fn migrate_assets(markdown: &str, source_dir: &Path, target_dir: &Path) -> AssetMigration {
+    let assets_dir = target_dir.join("assets");
+    let mut failed: Vec<String> = Vec::new();
+
+    let rewritten = IMAGE
+        .replace_all(markdown, |caps: &regex::Captures| {
+            let full = caps.get(0).map_or("", |m| m.as_str()).to_string();
+            let alt = caps.get(1).map_or("", |m| m.as_str());
+            let url = caps.get(2).map_or("", |m| m.as_str());
+
+            if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("data:") {
+                return full;
+            }
+            let Ok(decoded) = urlencoding::decode(url) else {
+                return full;
+            };
+            let relative = Path::new(decoded.as_ref());
+            if relative.is_absolute() {
+                return full;
+            }
+            let source = source_dir.join(relative);
+            if !source.is_file() {
+                return full;
+            }
+
+            let name = source
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "image".into());
+            if std::fs::create_dir_all(&assets_dir).is_err() {
+                failed.push(name);
+                return full;
+            }
+
+            let mut target = assets_dir.join(&name);
+            let mut suffix = 1;
+            while target.exists() {
+                let stem = Path::new(&name)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "image".into());
+                let ext = Path::new(&name)
+                    .extension()
+                    .map(|e| format!(".{}", e.to_string_lossy()))
+                    .unwrap_or_default();
+                target = assets_dir.join(format!("{stem}-{suffix}{ext}"));
+                suffix += 1;
+            }
+
+            match std::fs::copy(&source, &target) {
+                Ok(_) => {
+                    let new_name = target
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or(name);
+                    format!("![{alt}](<assets/{new_name}>)")
+                }
+                Err(_) => {
+                    failed.push(name);
+                    full
+                }
+            }
+        })
+        .into_owned();
+
+    AssetMigration {
+        markdown: rewritten,
+        failed,
+    }
+}
+
 fn embed_images(markdown: &str, search_dirs: &[PathBuf]) -> (String, Vec<(String, Vec<u8>)>) {
     let mut images: Vec<(String, Vec<u8>)> = Vec::new();
 

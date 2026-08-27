@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
@@ -10,7 +11,16 @@ import {
   SettingsIcon,
 } from "../icons";
 import { mod, shortcut } from "../../lib/platform";
-import { newEditorWindow, openFilePreview } from "../../services/files";
+import {
+  listRecentFiles,
+  listUnsavedDrafts,
+  newEditorWindow,
+  openFilePreview,
+  removeRecentFile,
+  type DraftEntry,
+  type RecentEntry,
+} from "../../services/files";
+import { cn } from "../../lib/utils";
 
 interface EditorWindowMenuProps {
   onOpenSettings?: () => void;
@@ -38,6 +48,37 @@ export function EditorWindowMenu({
   onNewDocument,
   onSaveAs,
 }: EditorWindowMenuProps) {
+  const [recents, setRecents] = useState<RecentEntry[]>([]);
+  const [unsaved, setUnsaved] = useState<DraftEntry[]>([]);
+
+  const refreshLists = useCallback(() => {
+    listRecentFiles()
+      .then(setRecents)
+      .catch(() => setRecents([]));
+    listUnsavedDrafts()
+      .then(setUnsaved)
+      .catch(() => setUnsaved([]));
+  }, []);
+
+  useEffect(refreshLists, [refreshLists]);
+
+  const openEntry = async (entry: RecentEntry) => {
+    if (!entry.exists) {
+      await removeRecentFile(entry.path).catch(() => undefined);
+      refreshLists();
+      toast.error(`${entry.name} no longer exists; removed from recents`);
+      return;
+    }
+    if (onOpenFile) {
+      onOpenFile(entry.path);
+    } else {
+      await openFilePreview(entry.path).catch((error) => {
+        console.error("Failed to open recent file:", error);
+        toast.error("Failed to open file");
+      });
+    }
+  };
+
   const newDocument = async () => {
     if (onNewDocument) {
       onNewDocument();
@@ -67,7 +108,11 @@ export function EditorWindowMenu({
   };
 
   return (
-    <DropdownMenu.Root>
+    <DropdownMenu.Root
+      onOpenChange={(isOpen) => {
+        if (isOpen) refreshLists();
+      }}
+    >
       <DropdownMenu.Trigger asChild>
         <IconButton title="Menu" className="shrink-0">
           <MoreVerticalIcon className="w-4.5 h-4.5 stroke-[1.5]" />
@@ -108,6 +153,39 @@ export function EditorWindowMenu({
           )}
 
           <DropdownMenu.Separator className="h-px bg-border my-1" />
+
+          {(recents.length > 0 || unsaved.length > 0) && (
+            <>
+              <DropdownMenu.Separator className="h-px bg-border my-1" />
+              <DropdownMenu.Label className="px-3 py-1 text-xs text-text-muted">
+                Recent
+              </DropdownMenu.Label>
+              {unsaved.map((draft) => (
+                <DropdownMenu.Item
+                  key={draft.path}
+                  className={itemClass}
+                  onSelect={() => onOpenFile?.(draft.path)}
+                >
+                  <span className="flex-1 truncate">{draft.title}</span>
+                  <span className="text-xs text-text-muted shrink-0">
+                    Unsaved
+                  </span>
+                </DropdownMenu.Item>
+              ))}
+              {recents.slice(0, 10).map((entry) => (
+                <DropdownMenu.Item
+                  key={entry.path}
+                  className={cn(itemClass, !entry.exists && "opacity-50")}
+                  onSelect={() => void openEntry(entry)}
+                >
+                  <span className="truncate">{entry.name}</span>
+                  <span className="flex-1 truncate text-xs text-text-muted">
+                    {entry.dir}
+                  </span>
+                </DropdownMenu.Item>
+              ))}
+            </>
+          )}
 
           {onOpenNotes && (
             <DropdownMenu.Item className={itemClass} onSelect={onOpenNotes}>

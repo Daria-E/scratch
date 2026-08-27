@@ -19,7 +19,10 @@ import {
   downloadMarkdown,
   exportTypesetPdf,
 } from "../../services/pdf";
-import { markdownFromEditor } from "../../lib/editorMarkdown";
+import {
+  markdownFromEditor,
+  parentDirectory,
+} from "../../lib/editorMarkdown";
 import type { Note, Settings } from "../../types/note";
 import type { Editor } from "@tiptap/react";
 import {
@@ -391,7 +394,10 @@ export function CommandPalette({
                 return;
               }
               const markdown =
-                markdownFromEditor(editorRef?.current) || currentNote.content;
+                markdownFromEditor(
+                  editorRef?.current,
+                  currentNote?.path ? parentDirectory(currentNote.path) : undefined
+                ) || currentNote.content;
               const saved = await exportTypesetPdf(
                 markdown,
                 currentNote.title,
@@ -440,7 +446,10 @@ export function CommandPalette({
                 return;
               }
               const markdown =
-                markdownFromEditor(editorRef?.current) || currentNote.content;
+                markdownFromEditor(
+                  editorRef?.current,
+                  currentNote?.path ? parentDirectory(currentNote.path) : undefined
+                ) || currentNote.content;
               const saved = await downloadMarkdown(markdown, currentNote.title);
               if (saved) {
                 toast.success("Markdown saved successfully");

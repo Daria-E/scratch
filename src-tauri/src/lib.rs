@@ -110,6 +110,26 @@ pub struct AppConfig {
     pub ui: GlobalSettings,
     #[serde(default, rename = "defaultWindow")]
     pub default_window: DefaultWindow,
+    #[serde(default, rename = "recentFiles")]
+    pub recent_files: Vec<String>,
+}
+
+const RECENT_FILES_CAP: usize = 15;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentEntry {
+    pub path: String,
+    pub name: String,
+    pub dir: String,
+    pub exists: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftEntry {
+    pub path: String,
+    pub title: String,
 }
 
 // Which kind of window opens when the app starts with no file argument.
@@ -2044,6 +2064,112 @@ fn draft_file_name() -> String {
 }
 
 #[tauri::command]
+fn list_recent_files(state: State<AppState>) -> Vec<RecentEntry> {
+    state
+        .app_config
+        .read()
+        .expect("app_config read lock")
+        .recent_files
+        .iter()
+        .map(|path| {
+            let p = Path::new(path);
+            RecentEntry {
+                path: path.clone(),
+                name: p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.clone()),
+                dir: p
+                    .parent()
+                    .map(|d| d.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                exists: p.is_file(),
+            }
+        })
+        .collect()
+}
+
+#[tauri::command]
+fn add_recent_file(app: AppHandle, path: String, state: State<AppState>) -> Result<(), String> {
+    if is_draft_path(app.clone(), path.clone()) {
+        return Ok(());
+    }
+    let mut config = state.app_config.write().expect("app_config write lock");
+    config.recent_files.retain(|existing| existing != &path);
+    config.recent_files.insert(0, path);
+    config.recent_files.truncate(RECENT_FILES_CAP);
+    save_app_config(&app, &config).map_err(|e| format!("Failed to save recents: {e}"))
+}
+
+#[tauri::command]
+fn remove_recent_file(
+    app: AppHandle,
+    path: String,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let mut config = state.app_config.write().expect("app_config write lock");
+    config.recent_files.retain(|existing| existing != &path);
+    save_app_config(&app, &config).map_err(|e| format!("Failed to save recents: {e}"))
+}
+
+#[tauri::command]
+fn list_unsaved_drafts(app: AppHandle) -> Vec<DraftEntry> {
+    let Ok(dir) = drafts_dir(&app) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut drafts: Vec<(std::time::SystemTime, DraftEntry)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path.extension().is_none_or(|ext| ext != "md") {
+                return None;
+            }
+            let content = std::fs::read_to_string(&path).ok()?;
+            if content.trim().is_empty() {
+                return None;
+            }
+            let modified = entry.metadata().and_then(|m| m.modified()).ok()?;
+            Some((
+                modified,
+                DraftEntry {
+                    path: path.to_string_lossy().to_string(),
+                    title: extract_title(&content),
+                },
+            ))
+        })
+        .collect();
+    drafts.sort_by(|a, b| b.0.cmp(&a.0));
+    drafts.into_iter().map(|(_, entry)| entry).collect()
+}
+
+fn cleanup_stale_empty_drafts(app: &AppHandle) {
+    let Ok(dir) = drafts_dir(app) else { return };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let week = Duration::from_secs(7 * 24 * 60 * 60);
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_stale_empty = path.extension().is_some_and(|ext| ext == "md")
+            && std::fs::read_to_string(&path)
+                .map(|content| content.trim().is_empty())
+                .unwrap_or(false)
+            && entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|m| m.elapsed().ok())
+                .is_some_and(|age| age > week);
+        if is_stale_empty {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
+#[tauri::command]
 fn get_default_window(state: State<AppState>) -> DefaultWindow {
     state.app_config.read().expect("app_config read lock").default_window
 }
@@ -2084,9 +2210,12 @@ async fn create_draft(app: AppHandle) -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
-// Moves a draft to a user-chosen location. Asset migration lands with image support.
 #[tauri::command]
-async fn save_draft_as(app: AppHandle, draft_path: String, target_path: String) -> Result<(), String> {
+async fn save_draft_as(
+    app: AppHandle,
+    draft_path: String,
+    target_path: String,
+) -> Result<Vec<String>, String> {
     if !is_draft_path(app, draft_path.clone()) {
         return Err("Not a draft file".into());
     }
@@ -2094,14 +2223,30 @@ async fn save_draft_as(app: AppHandle, draft_path: String, target_path: String) 
     let content = fs::read_to_string(&draft_path)
         .await
         .map_err(|e| format!("Failed to read draft: {e}"))?;
-    fs::write(&target_path, content)
+
+    let source_dir = Path::new(&draft_path)
+        .parent()
+        .ok_or("Draft has no parent directory")?
+        .to_path_buf();
+    let target_dir = Path::new(&target_path)
+        .parent()
+        .ok_or("Target has no parent directory")?
+        .to_path_buf();
+
+    let migration = tokio::task::spawn_blocking(move || {
+        preprocess::migrate_assets(&content, &source_dir, &target_dir)
+    })
+    .await
+    .map_err(|e| format!("Asset migration failed: {e}"))?;
+
+    fs::write(&target_path, migration.markdown)
         .await
         .map_err(|e| format!("Failed to write file: {e}"))?;
     fs::remove_file(&draft_path)
         .await
         .map_err(|e| format!("Saved, but the draft could not be removed: {e}"))?;
 
-    Ok(())
+    Ok(migration.failed)
 }
 
 #[tauri::command]
@@ -2297,11 +2442,17 @@ fn validate_preview_path(path: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-async fn read_file_direct(path: String) -> Result<FileContent, String> {
+async fn read_file_direct(app: AppHandle, path: String) -> Result<FileContent, String> {
     let canonical = validate_preview_path(&path)?;
 
     if !canonical.is_file() {
         return Err(format!("Not a file: {}", path));
+    }
+
+    // Images live beside the document; the asset protocol must be allowed to
+    // serve from its directory (hidden path segments are excluded by default).
+    if let Some(dir) = canonical.parent() {
+        let _ = app.asset_protocol_scope().allow_directory(dir, true);
     }
 
     let content = fs::read_to_string(&canonical)
@@ -2734,6 +2885,7 @@ fn copy_to_clipboard(app: AppHandle, text: String) -> Result<(), String> {
 #[tauri::command]
 async fn save_clipboard_image(
     base64_data: String,
+    target_dir: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     // Guard against empty clipboard payload
@@ -2741,12 +2893,15 @@ async fn save_clipboard_image(
         return Err("Clipboard data is empty".to_string());
     }
 
-    let folder = {
-        let app_config = state.app_config.read().expect("app_config read lock");
-        app_config
-            .notes_folder
-            .clone()
-            .ok_or("Notes folder not set")?
+    let folder = match target_dir {
+        Some(dir) => dir,
+        None => {
+            let app_config = state.app_config.read().expect("app_config read lock");
+            app_config
+                .notes_folder
+                .clone()
+                .ok_or("Notes folder not set")?
+        }
     };
 
     // Decode base64
@@ -2793,14 +2948,18 @@ async fn save_clipboard_image(
 #[tauri::command]
 async fn copy_image_to_assets(
     source_path: String,
+    target_dir: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let folder = {
-        let app_config = state.app_config.read().expect("app_config read lock");
-        app_config
-            .notes_folder
-            .clone()
-            .ok_or("Notes folder not set")?
+    let folder = match target_dir {
+        Some(dir) => dir,
+        None => {
+            let app_config = state.app_config.read().expect("app_config read lock");
+            app_config
+                .notes_folder
+                .clone()
+                .ok_or("Notes folder not set")?
+        }
     };
 
     let source = PathBuf::from(&source_path);
@@ -4198,6 +4357,8 @@ pub fn run() {
                 }
             }
 
+            cleanup_stale_empty_drafts(app.handle());
+
             // Global settings live in app config; folder-scoped keys stay with the folder.
             // Seed the global block once from a folder that predates the split.
             if app_config.ui.is_empty() {
@@ -4318,6 +4479,10 @@ pub fn run() {
             export_pdf,
             list_export_presets,
             get_default_window,
+            list_recent_files,
+            add_recent_file,
+            remove_recent_file,
+            list_unsaved_drafts,
             set_default_window,
             create_draft,
             new_editor_window,

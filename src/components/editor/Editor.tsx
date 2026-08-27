@@ -61,7 +61,11 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Menu, MenuItem, PredefinedMenuItem } from "@tauri-apps/api/menu";
 import { useOptionalNotes } from "../../context/NotesContext";
 import { useTheme } from "../../context/ThemeContext";
-import { markdownFromEditor } from "../../lib/editorMarkdown";
+import {
+  absolutizeImageLinks,
+  markdownFromEditor,
+  parentDirectory,
+} from "../../lib/editorMarkdown";
 import { Frontmatter } from "./Frontmatter";
 import { BlockMathEditor } from "./BlockMathEditor";
 import { LinkEditor } from "./LinkEditor";
@@ -590,6 +594,9 @@ export function Editor({
   const unpinNote = notesCtx?.unpinNote;
   const notes = notesCtx?.notes;
   const { textDirection } = useTheme();
+  const documentBaseDir = previewMode
+    ? parentDirectory(previewMode.filePath)
+    : (notesCtx?.notesFolder ?? null);
   const [isSaving, setIsSaving] = useState(false);
   // Force re-render when selection changes to update toolbar active states
   const [, setSelectionKey] = useState(0);
@@ -646,8 +653,8 @@ export function Editor({
 
   const getMarkdown = useCallback(
     (editorInstance: ReturnType<typeof useEditor>) =>
-      markdownFromEditor(editorInstance),
-    [],
+      markdownFromEditor(editorInstance, documentBaseDir ?? undefined),
+    [documentBaseDir],
   );
 
   // Load settings when note changes or notes are refreshed (e.g., after pin/unpin)
@@ -1360,14 +1367,17 @@ export function Editor({
 
               try {
                 // Save clipboard image
+                const targetDir = previewMode
+                  ? parentDirectory(previewMode.filePath)
+                  : null;
                 const relativePath = await invoke<string>(
                   "save_clipboard_image",
-                  { base64Data: base64 },
+                  { base64Data: base64, targetDir },
                 );
 
-                // Get notes folder and construct absolute path using Tauri's join
-                const notesFolder = await invoke<string>("get_notes_folder");
-                const absolutePath = await join(notesFolder, relativePath);
+                const baseDir =
+                  targetDir ?? (await invoke<string>("get_notes_folder"));
+                const absolutePath = await join(baseDir, relativePath);
 
                 // Convert to Tauri asset URL
                 const assetUrl = convertFileSrc(absolutePath);
@@ -1660,16 +1670,19 @@ export function Editor({
         lastReloadVersionRef.current = reloadVersion;
         loadedModifiedRef.current = currentNote.modified;
         isLoadingRef.current = true;
+        const reloadContent = documentBaseDir
+          ? absolutizeImageLinks(currentNote.content, documentBaseDir)
+          : currentNote.content;
         const manager = editor.storage.markdown?.manager;
         if (manager) {
           try {
-            const parsed = manager.parse(currentNote.content);
+            const parsed = manager.parse(reloadContent);
             editor.commands.setContent(parsed);
           } catch {
-            editor.commands.setContent(currentNote.content);
+            editor.commands.setContent(reloadContent);
           }
         } else {
-          editor.commands.setContent(currentNote.content);
+          editor.commands.setContent(reloadContent);
         }
         isLoadingRef.current = false;
         return;
@@ -1692,17 +1705,20 @@ export function Editor({
     editor.commands.blur();
 
     // Parse markdown and set content
+    const installContent = documentBaseDir
+      ? absolutizeImageLinks(currentNote.content, documentBaseDir)
+      : currentNote.content;
     const manager = editor.storage.markdown?.manager;
     if (manager) {
       try {
-        const parsed = manager.parse(currentNote.content);
+        const parsed = manager.parse(installContent);
         editor.commands.setContent(parsed);
       } catch {
         // Fallback to plain text if parsing fails
-        editor.commands.setContent(currentNote.content);
+        editor.commands.setContent(installContent);
       }
     } else {
-      editor.commands.setContent(currentNote.content);
+      editor.commands.setContent(installContent);
     }
 
     // Scroll to top after content is set (must be after setContent to work reliably)
@@ -1921,13 +1937,17 @@ export function Editor({
     if (selected) {
       try {
         // Copy image to assets folder and get relative path (assets/filename.ext)
+        const targetDir = previewMode
+          ? parentDirectory(previewMode.filePath)
+          : null;
         const relativePath = await invoke<string>("copy_image_to_assets", {
           sourcePath: selected as string,
+          targetDir,
         });
 
-        // Get notes folder and construct absolute path using Tauri's join
-        const notesFolder = await invoke<string>("get_notes_folder");
-        const absolutePath = await join(notesFolder, relativePath);
+        const baseDir =
+          targetDir ?? (await invoke<string>("get_notes_folder"));
+        const absolutePath = await join(baseDir, relativePath);
 
         // Convert to Tauri asset URL
         const assetUrl = convertFileSrc(absolutePath);

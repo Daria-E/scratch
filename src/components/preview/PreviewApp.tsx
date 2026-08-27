@@ -52,6 +52,13 @@ export function PreviewApp({
         setContent(result.content);
         setTitle(result.title);
         setModified(result.modified);
+        isDraftPath(filePath)
+          .then((draft) => {
+            if (!draft) {
+              filesService.addRecentFile(filePath).catch(() => undefined);
+            }
+          })
+          .catch(() => undefined);
       })
       .catch((error) => {
         console.error("Failed to load file:", error);
@@ -122,9 +129,15 @@ export function PreviewApp({
     if (!target) return;
 
     try {
-      await filesService.saveDraftAs(filePath, target);
+      const failedAssets = await filesService.saveDraftAs(filePath, target);
       setFilePath(target);
-      toast.success("Saved");
+      if (failedAssets.length > 0) {
+        toast.warning(
+          `Saved, but some images could not be copied: ${failedAssets.join(", ")}`
+        );
+      } else {
+        toast.success("Saved");
+      }
     } catch (error) {
       console.error("Failed to save document:", error);
       toast.error(typeof error === "string" ? error : "Failed to save");

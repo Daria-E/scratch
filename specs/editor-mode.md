@@ -94,6 +94,22 @@ themselves:
 - Saved file — images go to `<directory of the file>/assets/`.
 - Draft — images go to the draft's own directory under `{APP_DATA}/drafts/`.
 
+The asset protocol excludes hidden path segments (`requireLiteralLeadingDot`), and both
+drafts and arbitrary opened files can live under them, so `read_file_direct` grants the
+loaded document's directory to the asset scope at load time — the same runtime grant the
+notes folder receives. Consequence: opening a markdown file makes its directory
+asset-servable for the session; that is the deliberate cost of rendering its images.
+
+Asset folders are named `assets` and stay visible (decision 2026-08-27). Hidden
+folders get left behind by GUI copies and skipped by some backup tools, and hidden path
+segments re-enter the asset-protocol exclusion that caused the 403 class. If the shared
+folder proves annoying, the upgrade path is per-document folders (`<name>.assets/`),
+not hiding.
+
+Markdown on disk references images relative to the document (`assets/name.png`);
+`asset://` URLs exist only in the DOM. `editorMarkdown.ts` owns both boundary
+transforms (relativize on serialize, absolutize on load).
+
 Saving a draft (`mod+S`) therefore has to move its assets too:
 
 1. Scan the markdown for image links that are relative and resolve inside the draft
@@ -169,6 +185,10 @@ mounts an error boundary.
   asset migration on save.
 
 ## Known limits / risks
+
+- Keyboard shortcuts match `e.key`, which is layout-dependent: on a non-Latin layout
+  (e.g. Hebrew) letter shortcuts do not fire. Deferred; the fix is `e.code`-based
+  matching applied across all handlers at once.
 
 - Editing an arbitrary file inherits Scratch's autosave: changes are written ~300 ms after
   typing, with no explicit save step. This already applies to preview windows today.

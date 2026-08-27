@@ -42,6 +42,34 @@ export async function newEditorWindow(): Promise<void> {
 export async function saveDraftAs(
   draftPath: string,
   targetPath: string
-): Promise<void> {
+): Promise<string[]> {
   return invoke("save_draft_as", { draftPath, targetPath });
+}
+
+export interface RecentEntry {
+  path: string;
+  name: string;
+  dir: string;
+  exists: boolean;
+}
+
+export interface DraftEntry {
+  path: string;
+  title: string;
+}
+
+export async function listRecentFiles(): Promise<RecentEntry[]> {
+  return invoke("list_recent_files");
+}
+
+export async function addRecentFile(path: string): Promise<void> {
+  return invoke("add_recent_file", { path });
+}
+
+export async function removeRecentFile(path: string): Promise<void> {
+  return invoke("remove_recent_file", { path });
+}
+
+export async function listUnsavedDrafts(): Promise<DraftEntry[]> {
+  return invoke("list_unsaved_drafts");
 }
