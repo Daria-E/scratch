@@ -16,37 +16,81 @@ const TEMPLATE: &str = "main.typ";
 const NOTE: &str = "note.md";
 const SETTINGS: &str = "settings.json";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+const FALLBACK_FONTS: [&str; 4] = [
+    "Libertinus Serif",
+    "New Computer Modern",
+    "Noto Serif Hebrew",
+    "DejaVu Sans",
+];
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportSettings {
-    pub paper: String,
-    pub margin: String,
-    pub font_size: String,
-    pub leading: String,
-    pub fonts: Vec<String>,
-    pub lang: String,
-    pub dir: String,
-    pub page_numbers: bool,
+    pub paper_size: Option<String>,
+    pub margin_mm: Option<f64>,
+    pub font_size_pt: Option<f64>,
+    pub line_spacing: Option<f64>,
+    pub font_family: Option<String>,
+    pub direction: Option<String>,
+    pub page_numbers: Option<bool>,
 }
 
-impl Default for ExportSettings {
-    fn default() -> Self {
-        Self {
-            paper: "a4".into(),
-            margin: "20mm".into(),
-            font_size: "11pt".into(),
-            leading: "0.75em".into(),
-            fonts: vec![
-                "Libertinus Serif".into(),
-                "New Computer Modern".into(),
-                "Noto Serif Hebrew".into(),
-                "DejaVu Sans".into(),
-            ],
-            lang: "en".into(),
-            dir: "ltr".into(),
-            page_numbers: true,
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TemplateSettings {
+    paper: String,
+    margin: String,
+    font_size: String,
+    leading: String,
+    fonts: Vec<String>,
+    lang: String,
+    dir: String,
+    page_numbers: bool,
+}
+
+impl ExportSettings {
+    fn to_template(&self, markdown: &str) -> TemplateSettings {
+        let dir = match self.direction.as_deref() {
+            Some("rtl") => "rtl",
+            Some("ltr") => "ltr",
+            _ => first_strong_direction(markdown),
+        };
+
+        let mut fonts: Vec<String> = self.font_family.iter().cloned().collect();
+        fonts.extend(FALLBACK_FONTS.iter().map(|f| f.to_string()));
+
+        TemplateSettings {
+            paper: typst_paper(self.paper_size.as_deref()),
+            margin: format!("{}mm", self.margin_mm.unwrap_or(20.0)),
+            font_size: format!("{}pt", self.font_size_pt.unwrap_or(11.0)),
+            leading: format!("{}em", self.line_spacing.unwrap_or(0.75)),
+            fonts,
+            lang: if dir == "rtl" { "he".into() } else { "en".into() },
+            dir: dir.into(),
+            page_numbers: self.page_numbers.unwrap_or(true),
         }
     }
+}
+
+fn typst_paper(ui_value: Option<&str>) -> String {
+    match ui_value {
+        Some("letter") => "us-letter".into(),
+        Some("a5") => "a5".into(),
+        _ => "a4".into(),
+    }
+}
+
+fn first_strong_direction(text: &str) -> &'static str {
+    for c in text.chars() {
+        match c {
+            '\u{0590}'..='\u{08FF}' | '\u{FB1D}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}' => {
+                return "rtl"
+            }
+            'A'..='Z' | 'a'..='z' | '\u{00C0}'..='\u{024F}' => return "ltr",
+            _ => {}
+        }
+    }
+    "ltr"
 }
 
 struct ExportWorld {
@@ -58,7 +102,7 @@ struct ExportWorld {
 }
 
 impl ExportWorld {
-    fn new(markdown: &str, settings: &ExportSettings) -> Result<Self, String> {
+    fn new(markdown: &str, settings: &TemplateSettings) -> Result<Self, String> {
         let template = ASSETS
             .get_file("template.typ")
             .and_then(|f| f.contents_utf8())
@@ -163,7 +207,7 @@ fn join_messages<T: std::fmt::Display>(errors: impl IntoIterator<Item = T>) -> S
 }
 
 pub fn markdown_to_pdf(markdown: &str, settings: &ExportSettings) -> Result<Vec<u8>, String> {
-    let world = ExportWorld::new(markdown, settings)?;
+    let world = ExportWorld::new(markdown, &settings.to_template(markdown))?;
 
     let document = typst::compile::<PagedDocument>(&world)
         .output
@@ -182,8 +226,7 @@ mod tests {
     #[test]
     fn compiles_mixed_direction_note_with_math() {
         let settings = ExportSettings {
-            lang: "he".into(),
-            dir: "rtl".into(),
+            direction: Some("rtl".into()),
             ..Default::default()
         };
         let pdf = markdown_to_pdf(FIXTURE, &settings).expect("compile fixture");
@@ -193,5 +236,47 @@ mod tests {
             &pdf,
         )
         .expect("write test pdf");
+    }
+
+    #[test]
+    fn settings_reach_the_document() {
+        let letter = markdown_to_pdf(
+            "# Test\n\nBody text.",
+            &ExportSettings {
+                paper_size: Some("letter".into()),
+                page_numbers: Some(false),
+                ..Default::default()
+            },
+        )
+        .expect("compile letter");
+        assert!(letter.starts_with(b"%PDF"));
+        std::fs::write(
+            std::env::temp_dir().join("scratch-export-letter.pdf"),
+            &letter,
+        )
+        .expect("write letter pdf");
+    }
+
+    #[test]
+    fn auto_direction_uses_first_strong_character() {
+        assert_eq!(first_strong_direction("שלום עולם"), "rtl");
+        assert_eq!(first_strong_direction("hello world"), "ltr");
+        assert_eq!(first_strong_direction("# כותרת\n\nplain"), "rtl");
+        assert_eq!(first_strong_direction("## 2026 — plain"), "ltr");
+        assert_eq!(first_strong_direction("$x > y$"), "ltr");
+    }
+
+    #[test]
+    fn ui_paper_names_are_valid_typst_papers() {
+        for ui in ["a4", "letter", "a5"] {
+            let pdf = markdown_to_pdf(
+                "text",
+                &ExportSettings {
+                    paper_size: Some(ui.into()),
+                    ..Default::default()
+                },
+            );
+            assert!(pdf.is_ok(), "paper {ui} failed: {:?}", pdf.err());
+        }
     }
 }

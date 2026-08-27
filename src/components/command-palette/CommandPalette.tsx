@@ -14,7 +14,12 @@ import { useTheme } from "../../context/ThemeContext";
 import { useGit } from "../../context/GitContext";
 import * as notesService from "../../services/notes";
 import * as aiService from "../../services/ai";
-import { downloadPdf, downloadMarkdown } from "../../services/pdf";
+import {
+  downloadPdf,
+  downloadMarkdown,
+  exportTypesetPdf,
+} from "../../services/pdf";
+import { markdownFromEditor } from "../../lib/editorMarkdown";
 import type { Settings } from "../../types/note";
 import type { Editor } from "@tiptap/react";
 import {
@@ -94,7 +99,7 @@ export function CommandPalette({
     unpinNote,
     notesFolder,
   } = useNotes();
-  const { setTheme } = useTheme();
+  const { setTheme, exportSettings } = useTheme();
   const { status, gitAvailable, gitEnabled, commit, sync, isSyncing } = useGit();
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -313,6 +318,35 @@ export function CommandPalette({
           },
         },
         {
+          id: "export-typeset-pdf",
+          label: "Export PDF (typeset)",
+          icon: <DownloadIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
+          action: async () => {
+            try {
+              if (!currentNote) {
+                toast.error("No note selected");
+                return;
+              }
+              const markdown =
+                markdownFromEditor(editorRef?.current) || currentNote.content;
+              const saved = await exportTypesetPdf(
+                markdown,
+                currentNote.title,
+                exportSettings
+              );
+              if (saved) {
+                toast.success("PDF exported successfully");
+                onClose();
+              }
+            } catch (error) {
+              console.error("Failed to export PDF:", error);
+              toast.error(
+                typeof error === "string" ? error : "Failed to export PDF"
+              );
+            }
+          },
+        },
+        {
           id: "download-pdf",
           label: "Print as PDF",
           icon: <DownloadIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
@@ -342,18 +376,8 @@ export function CommandPalette({
                 toast.error("No note selected");
                 return;
               }
-              // Use live editor content with nbsp cleanup, fall back to saved content
-              let markdown = currentNote.content;
-              const editorInstance = editorRef?.current;
-              if (editorInstance) {
-                const manager = editorInstance.storage.markdown?.manager;
-                if (manager) {
-                  markdown = manager.serialize(editorInstance.getJSON());
-                  markdown = markdown.replace(/&nbsp;|&#160;/g, " ");
-                } else {
-                  markdown = editorInstance.getText();
-                }
-              }
+              const markdown =
+                markdownFromEditor(editorRef?.current) || currentNote.content;
               const saved = await downloadMarkdown(markdown, currentNote.title);
               if (saved) {
                 toast.success("Markdown saved successfully");

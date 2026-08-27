@@ -1,6 +1,8 @@
 import type { Editor } from "@tiptap/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
+import type { ExportSettings } from "../types/note";
+
 /**
  * Triggers the native print dialog for the editor content.
  * Users can save as PDF or print to a physical printer.
@@ -53,6 +55,31 @@ export async function downloadMarkdown(
     path: filePath,
     contents: Array.from(uint8Array)
   });
+
+  return true;
+}
+
+/**
+ * Typesets the markdown to PDF via the Typst backend.
+ *
+ * @param markdown - The markdown content to typeset
+ * @param noteTitle - The note title for the default filename
+ * @param settings - Page and typography settings, or undefined for defaults
+ * @returns Promise<boolean> - Returns true if the PDF was written, false if user cancelled
+ */
+export async function exportTypesetPdf(
+  markdown: string,
+  noteTitle: string,
+  settings?: ExportSettings
+): Promise<boolean> {
+  const filePath = await save({
+    defaultPath: `${sanitizeFilename(noteTitle)}.pdf`,
+    filters: [{ name: "PDF", extensions: ["pdf"] }],
+  });
+
+  if (!filePath) return false;
+
+  await invoke("export_pdf", { markdown, path: filePath, settings });
 
   return true;
 }

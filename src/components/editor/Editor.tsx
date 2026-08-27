@@ -61,6 +61,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Menu, MenuItem, PredefinedMenuItem } from "@tauri-apps/api/menu";
 import { useOptionalNotes } from "../../context/NotesContext";
 import { useTheme } from "../../context/ThemeContext";
+import { markdownFromEditor } from "../../lib/editorMarkdown";
 import { Frontmatter } from "./Frontmatter";
 import { BlockMathEditor } from "./BlockMathEditor";
 import { LinkEditor } from "./LinkEditor";
@@ -79,7 +80,11 @@ import { cn } from "../../lib/utils";
 import { plainTextFromMarkdown } from "../../lib/plainText";
 import { Button, IconButton, ToolbarButton, Tooltip } from "../ui";
 import * as notesService from "../../services/notes";
-import { downloadPdf, downloadMarkdown } from "../../services/pdf";
+import {
+  downloadPdf,
+  downloadMarkdown,
+  exportTypesetPdf,
+} from "../../services/pdf";
 import type { Settings } from "../../types/note";
 import {
   BoldIcon,
@@ -582,7 +587,7 @@ export function Editor({
   const pinNote = notesCtx?.pinNote;
   const unpinNote = notesCtx?.unpinNote;
   const notes = notesCtx?.notes;
-  const { textDirection } = useTheme();
+  const { textDirection, exportSettings } = useTheme();
   const [isSaving, setIsSaving] = useState(false);
   // Force re-render when selection changes to update toolbar active states
   const [, setSelectionKey] = useState(0);
@@ -637,20 +642,9 @@ export function Editor({
   // Keep ref in sync with current note ID
   currentNoteIdRef.current = currentNote?.id ?? null;
 
-  // Get markdown from editor
   const getMarkdown = useCallback(
-    (editorInstance: ReturnType<typeof useEditor>) => {
-      if (!editorInstance) return "";
-      const manager = editorInstance.storage.markdown?.manager;
-      if (manager) {
-        let markdown = manager.serialize(editorInstance.getJSON());
-        // Clean up nbsp entities that TipTap inserts (especially in table cells)
-        markdown = markdown.replace(/&nbsp;|&#160;/g, " ");
-        return markdown;
-      }
-      // Fallback to plain text
-      return editorInstance.getText();
-    },
+    (editorInstance: ReturnType<typeof useEditor>) =>
+      markdownFromEditor(editorInstance),
     [],
   );
 
@@ -2123,6 +2117,26 @@ export function Editor({
     return () => window.removeEventListener("print-note", handler);
   }, [handleDownloadPdf]);
 
+  const handleExportTypesetPdf = useCallback(async () => {
+    if (!editor || !currentNote) return;
+    try {
+      const markdown = getMarkdown(editor);
+      const saved = await exportTypesetPdf(
+        markdown,
+        currentNote.title,
+        exportSettings
+      );
+      if (saved) {
+        toast.success("PDF exported successfully");
+      }
+    } catch (error) {
+      console.error("Failed to export PDF:", error);
+      toast.error(
+        typeof error === "string" ? error : "Failed to export PDF"
+      );
+    }
+  }, [editor, currentNote, getMarkdown, exportSettings]);
+
   const handleDownloadMarkdown = useCallback(async () => {
     if (!editor || !currentNote) return;
     try {
@@ -2582,6 +2596,13 @@ export function Editor({
                   Copy HTML
                 </DropdownMenu.Item>
                 <DropdownMenu.Separator className="h-px bg-border my-1" />
+                <DropdownMenu.Item
+                  className="px-3 py-1.5 text-sm text-text cursor-pointer outline-none hover:bg-bg-muted focus:bg-bg-muted flex items-center gap-2"
+                  onSelect={handleExportTypesetPdf}
+                >
+                  <DownloadIcon className="w-4 h-4 stroke-[1.6]" />
+                  Export PDF (typeset)
+                </DropdownMenu.Item>
                 <DropdownMenu.Item
                   className="px-3 py-1.5 text-sm text-text cursor-pointer outline-none hover:bg-bg-muted focus:bg-bg-muted flex items-center gap-2"
                   onSelect={handleDownloadPdf}

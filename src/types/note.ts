@@ -43,6 +43,18 @@ export type ThemeColorKey =
 // Partial map of color overrides (hex strings)
 export type CustomColors = Partial<Record<ThemeColorKey, string>>;
 
+export type PaperSize = "a4" | "letter" | "a5";
+
+export interface ExportSettings {
+  paperSize?: PaperSize;
+  marginMm?: number;
+  fontSizePt?: number;
+  lineSpacing?: number;
+  fontFamily?: string;
+  direction?: TextDirection;
+  pageNumbers?: boolean;
+}
+
 // Per-folder settings (stored in .scratch/settings.json)
 export interface Settings {
   theme: ThemeSettings;
@@ -60,6 +72,7 @@ export interface Settings {
   ignoredPatterns?: string[];
   customColorsLight?: CustomColors;
   customColorsDark?: CustomColors;
+  exportSettings?: ExportSettings;
 }
 
 export interface FolderNode {

@@ -136,6 +136,8 @@ pub struct Settings {
     pub custom_colors_light: Option<std::collections::HashMap<String, String>>,
     #[serde(rename = "customColorsDark")]
     pub custom_colors_dark: Option<std::collections::HashMap<String, String>>,
+    #[serde(rename = "exportSettings")]
+    pub export_settings: Option<export::ExportSettings>,
 }
 
 // Search result
@@ -1816,9 +1818,14 @@ fn update_git_enabled(
 }
 
 #[tauri::command]
-async fn export_pdf(markdown: String, path: String) -> Result<(), String> {
+async fn export_pdf(
+    markdown: String,
+    path: String,
+    settings: Option<export::ExportSettings>,
+) -> Result<(), String> {
+    let settings = settings.unwrap_or_default();
     let bytes = tokio::task::spawn_blocking(move || {
-        export::markdown_to_pdf(&markdown, &export::ExportSettings::default())
+        export::markdown_to_pdf(&markdown, &settings)
     })
     .await
     .map_err(|e| format!("Export task failed: {e}"))??;
