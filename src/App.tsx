@@ -682,6 +682,7 @@ function App() {
         <PreviewApp
           filePath={editorWindowFile}
           onOpenNotes={() => setShowNotes(true)}
+          onFilePathChange={isPreview ? undefined : setEditorFile}
         />
       </WindowShell>
     );

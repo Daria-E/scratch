@@ -79,20 +79,35 @@ autosave path (300 ms, `save_file_direct`) works unchanged and nothing is lost t
 - The window titles it "Untitled" and shows no path.
 - `mod+S` in a draft opens a save dialog and moves the draft to the chosen location; the
   window then targets the new path and the file enters recents.
-- Drafts with content that were never saved reappear in the recents menu under "Unsaved"
-  on next launch.
-- Empty drafts older than 7 days are deleted at startup.
+
+Draft buffers are ephemeral (decision 2026-08-27, superseding "drafts persist across
+sessions"): the draft file exists for crash safety, not as a document store. Abandoning
+a non-empty draft — closing the window, opening another file in it, or switching to the
+notes view — prompts Save / Discard / Cancel (invariant D). "Save" runs the save-as
+flow; a cancelled save dialog cancels the abandonment. "Discard" deletes the draft file
+and its asset subfolder (`discard_draft`). An empty draft is deleted silently on
+abandonment. "Save to folder" imports the draft into the notes folder (with asset
+migration) and then discards it without prompting — it is a save.
+
+What survives on disk is therefore only what a crash or kill left behind; those drafts
+appear in the header menu labeled "Recovered" and prompt normally when next abandoned.
+Startup cleanup stays as the backstop: empty drafts and unreferenced draft assets older
+than 7 days are deleted.
 
 ## Images
 
-Image paste (`Editor.tsx:1362` → `save_clipboard_image`) and image insertion
-(`Editor.tsx:1922` → `copy_image_to_assets`) currently write into
-`<notes folder>/assets/` and are the only editor features that hard-fail without a
-folder. Both commands gain a target directory instead of resolving the notes folder
-themselves:
+Image paste and image insertion go through one Editor helper (`importImageAsset`) that
+invokes `save_clipboard_image` / `copy_image_to_assets` with a target directory and the
+document's stem. Every write lands in a per-document subfolder (decision 2026-08-27,
+implemented same day):
 
-- Saved file — images go to `<directory of the file>/assets/`.
-- Draft — images go to the draft's own directory under `{APP_DATA}/drafts/`.
+- Saved file — images go to `<directory of the file>/assets/<file stem>/`.
+- Note — images go to `<notes folder>/assets/<note stem>/`.
+- Draft — images go to `{APP_DATA}/drafts/assets/<draft stem>/`.
+
+Pre-existing flat `assets/name.png` links keep resolving; documents are never rewritten
+in place. Notes with the same stem in different subfolders share an asset subfolder —
+harmless (collisions inside get `-1` suffixes) and no GC runs in the notes folder.
 
 The asset protocol excludes hidden path segments (`requireLiteralLeadingDot`), and both
 drafts and arbitrary opened files can live under them, so `read_file_direct` grants the
@@ -114,11 +129,24 @@ Saving a draft (`mod+S`) therefore has to move its assets too:
 
 1. Scan the markdown for image links that are relative and resolve inside the draft
    directory. Absolute paths, `http(s):` and `data:` URLs are left untouched.
-2. Copy each referenced file once into `<target directory>/assets/`, suffixing the name
-   on collision.
+2. Copy each referenced file once into `<target directory>/assets/<target stem>/`,
+   suffixing the name on collision.
 3. Rewrite those links to the new relative paths, then write the markdown to the target.
 4. If any copy fails, still save the document and report which images were left behind —
    never lose the text over an asset.
+
+Draft assets are garbage-collected at startup (`sweep_unreferenced_assets`): mark =
+every relative image link across all draft files, sweep = any file under
+`{APP_DATA}/drafts/assets/` that is unreferenced and older than 7 days, then empty
+folders. The grace period protects images pasted into a buffer that never flushed.
+The sweep never touches the notes folder or any user-chosen directory. It is the
+backstop for crash leftovers; the direct paths clean up immediately — save-as removes
+the source subfolder after a clean migration, and discard removes it with the draft.
+
+"Save to folder" (`import_file_to_folder`) runs the same asset migration as save-as
+(added 2026-08-27; it previously copied raw content, breaking a draft's relative image
+links in the notes folder). Failed copies keep their original links silently — the
+command's return shape has no failure channel; accepted for now.
 
 ## Folder-dependent features
 
@@ -169,6 +197,16 @@ makes the remount ordering-safe.
 screen; load/save failures must surface as toasts, not console lines. Every window kind
 mounts an error boundary.
 
+**D. A non-empty draft buffer is never abandoned without user choice.** Every path that
+navigates away from a draft (window close, in-window open, open-notes switch) funnels
+through one guard (`confirmAbandonDraft` in `PreviewApp`) that prompts Save / Discard /
+Cancel; empty drafts are deleted silently. Corollaries: a discarded draft must stay
+deleted — `save()` suppresses writes to discarded paths, because the editor's unmount
+flush and debounced autosave would otherwise resurrect the file; and the host's notion
+of the window's file (`App.editorFile`) must be synced on every in-window path change
+(`onFilePathChange`), or leaving and re-entering the editor view reopens a stale or
+deleted path.
+
 ## Milestones
 
 - E1: settings become folder-optional — category split, `update_settings` no longer
@@ -183,6 +221,11 @@ mounts an error boundary.
 - E4: recents, drafts and assets — app-config recents list with stale handling; draft
   creation, save-as and recovery; startup cleanup; target-directory image commands and
   asset migration on save.
+- E5: per-document asset subfolders (`assets/<doc stem>/`) and the unreferenced-asset
+  sweep.
+- E6: ephemeral draft lifecycle — abandonment guard with Save/Discard/Cancel prompt,
+  `discard_draft`, "Recovered" relabel, host path sync, asset migration in
+  `import_file_to_folder` (invariant D).
 
 ## Known limits / risks
 

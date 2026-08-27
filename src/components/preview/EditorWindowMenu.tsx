@@ -120,7 +120,7 @@ export function EditorWindowMenu({
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
-          className="min-w-52 bg-bg border border-border rounded-md shadow-lg py-1 z-50"
+          className="min-w-52 max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto bg-bg border border-border rounded-md shadow-lg py-1 z-50"
           sideOffset={5}
           align="start"
         >
@@ -168,7 +168,7 @@ export function EditorWindowMenu({
                 >
                   <span className="flex-1 truncate">{draft.title}</span>
                   <span className="text-xs text-text-muted shrink-0">
-                    Unsaved
+                    Recovered
                   </span>
                 </DropdownMenu.Item>
               ))}

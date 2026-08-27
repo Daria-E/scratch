@@ -12,15 +12,32 @@ import { useWindowShell } from "../WindowShell";
 import type { Editor as TiptapEditor } from "@tiptap/react";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { isDraftPath } from "../../services/notes";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  Button,
+} from "../ui";
 
 interface PreviewAppProps {
   filePath: string;
   onOpenNotes?: () => void;
+  onFilePathChange?: (path: string | null) => void;
+}
+
+type AbandonChoice = "save" | "discard" | "cancel";
+interface AbandonOutcome {
+  proceed: boolean;
+  newPath?: string | null;
 }
 
 export function PreviewApp({
   filePath: initialFilePath,
   onOpenNotes,
+  onFilePathChange,
 }: PreviewAppProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -28,8 +45,20 @@ export function PreviewApp({
   const { openShortcutsModal } = useWindowShell();
   const [filePath, setFilePath] = useState(initialFilePath);
   const [isDraft, setIsDraft] = useState(false);
+  const [abandonPrompt, setAbandonPrompt] = useState<{
+    resolve: (choice: AbandonChoice) => void;
+  } | null>(null);
+  const isDraftRef = useRef(false);
+  const filePathRef = useRef(initialFilePath);
+  const discardedPathsRef = useRef<Set<string>>(new Set());
+  const guardActiveRef = useRef(false);
+  const skipCloseGuardRef = useRef(false);
+
+  isDraftRef.current = isDraft;
+  filePathRef.current = filePath;
 
   useEffect(() => setFilePath(initialFilePath), [initialFilePath]);
+  useEffect(() => onFilePathChange?.(filePath), [filePath, onFilePathChange]);
 
   useEffect(() => {
     isDraftPath(filePath)
@@ -90,6 +119,8 @@ export function PreviewApp({
 
   const save = useCallback(
     async (newContent: string) => {
+      // A discarded draft must stay deleted; late autosaves would resurrect it
+      if (discardedPathsRef.current.has(filePath)) return;
       try {
         const result = await filesService.saveFileDirect(filePath, newContent);
         recentlySavedRef.current = true;
@@ -104,17 +135,6 @@ export function PreviewApp({
     [filePath],
   );
 
-  const openFileDialog = useCallback(() => {
-    pickMarkdownFile()
-      .then((picked) => {
-        if (picked) setFilePath(picked);
-      })
-      .catch((error) => {
-        console.error("Failed to open file:", error);
-        toast.error("Failed to open file");
-      });
-  }, []);
-
   const newDocument = useCallback(() => {
     filesService.newEditorWindow().catch((error) => {
       console.error("Failed to open new document:", error);
@@ -122,12 +142,12 @@ export function PreviewApp({
     });
   }, []);
 
-  const saveAs = useCallback(async () => {
+  const saveAs = useCallback(async (): Promise<string | null> => {
     const target = await saveDialog({
       defaultPath: "untitled.md",
       filters: [{ name: "Markdown", extensions: ["md"] }],
     });
-    if (!target) return;
+    if (!target) return null;
 
     try {
       const failedAssets = await filesService.saveDraftAs(filePath, target);
@@ -139,11 +159,111 @@ export function PreviewApp({
       } else {
         toast.success("Saved");
       }
+      return target;
     } catch (error) {
       console.error("Failed to save document:", error);
       toast.error(typeof error === "string" ? error : "Failed to save");
+      return null;
     }
   }, [filePath]);
+
+  const draftIsEmpty = useCallback(async (path: string): Promise<boolean> => {
+    const editor = editorRef.current;
+    if (editor && !editor.isDestroyed) return editor.isEmpty;
+    // Editor unmounted (settings view): its unmount flush made the file current
+    try {
+      return (await filesService.readFileDirect(path)).content.trim() === "";
+    } catch {
+      return true;
+    }
+  }, []);
+
+  const confirmAbandonDraft =
+    useCallback(async (): Promise<AbandonOutcome> => {
+      if (!isDraftRef.current) return { proceed: true };
+      const path = filePathRef.current;
+      if (discardedPathsRef.current.has(path)) {
+        return { proceed: true, newPath: null };
+      }
+      if (await draftIsEmpty(path)) {
+        discardedPathsRef.current.add(path);
+        await filesService.discardDraft(path).catch(() => undefined);
+        return { proceed: true, newPath: null };
+      }
+      if (guardActiveRef.current) return { proceed: false };
+      guardActiveRef.current = true;
+      try {
+        const choice = await new Promise<AbandonChoice>((resolve) =>
+          setAbandonPrompt({ resolve }),
+        );
+        if (choice === "cancel") return { proceed: false };
+        if (choice === "save") {
+          const target = await saveAs();
+          return target ? { proceed: true, newPath: target } : { proceed: false };
+        }
+        discardedPathsRef.current.add(path);
+        try {
+          await filesService.discardDraft(path);
+        } catch (error) {
+          console.error("Failed to discard draft:", error);
+        }
+        return { proceed: true, newPath: null };
+      } finally {
+        guardActiveRef.current = false;
+        setAbandonPrompt(null);
+      }
+    }, [saveAs, draftIsEmpty]);
+
+  const confirmAbandonDraftRef = useRef(confirmAbandonDraft);
+  confirmAbandonDraftRef.current = confirmAbandonDraft;
+
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const unlisten = win.onCloseRequested(async (event) => {
+      if (skipCloseGuardRef.current) return;
+      // Owning the destroy (instead of the API wrapper) surfaces its errors
+      event.preventDefault();
+      const { proceed } = await confirmAbandonDraftRef.current();
+      if (proceed) {
+        win.destroy().catch((error) => {
+          console.error("Failed to close window:", error);
+          toast.error(`Failed to close window: ${error}`);
+        });
+      }
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  const openFileInWindow = useCallback(
+    async (picked: string) => {
+      if (picked === filePathRef.current) return;
+      const { proceed } = await confirmAbandonDraft();
+      if (proceed) setFilePath(picked);
+    },
+    [confirmAbandonDraft],
+  );
+
+  const openFileDialog = useCallback(() => {
+    pickMarkdownFile()
+      .then((picked) => {
+        if (picked) return openFileInWindow(picked);
+      })
+      .catch((error) => {
+        console.error("Failed to open file:", error);
+        toast.error("Failed to open file");
+      });
+  }, [openFileInWindow]);
+
+  const openNotes = useCallback(async () => {
+    if (!onOpenNotes) return;
+    const { proceed, newPath } = await confirmAbandonDraft();
+    if (!proceed) return;
+    // Sync the host before this component unmounts with the switch
+    if (newPath !== undefined) onFilePathChange?.(newPath);
+    onOpenNotes();
+  }, [onOpenNotes, confirmAbandonDraft, onFilePathChange]);
 
   const reload = useCallback(async () => {
     try {
@@ -215,14 +335,7 @@ export function PreviewApp({
       // Cmd+O: Open an existing markdown file
       if (modKey && !e.shiftKey && keyIs(e, "o")) {
         e.preventDefault();
-        pickMarkdownFile()
-          .then((picked) => {
-            if (picked) setFilePath(picked);
-          })
-          .catch((error) => {
-            console.error("Failed to open file:", error);
-            toast.error("Failed to open file");
-          });
+        openFileDialog();
         return;
       }
 
@@ -273,7 +386,7 @@ export function PreviewApp({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [focusMode, reload, isDraft, saveAs]);
+  }, [focusMode, reload, isDraft, saveAs, openFileDialog]);
 
   const [isSaving, setIsSaving] = useState(false);
   const savingRef = useRef(false);
@@ -284,7 +397,12 @@ export function PreviewApp({
     setIsSaving(true);
     try {
       await filesService.importFileToFolder(filePath);
+      if (isDraftRef.current) {
+        discardedPathsRef.current.add(filePath);
+        await filesService.discardDraft(filePath).catch(() => undefined);
+      }
       // Backend emits select-note + focuses main window; close this preview
+      skipCloseGuardRef.current = true;
       await getCurrentWindow().close();
     } catch (error) {
       console.error("Failed to save to folder:", error);
@@ -306,6 +424,40 @@ export function PreviewApp({
     reload,
   };
 
+  const abandonDialog = (
+    <AlertDialog
+      open={abandonPrompt !== null}
+      onOpenChange={(open) => {
+        if (!open) abandonPrompt?.resolve("cancel");
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Unsaved document</AlertDialogTitle>
+          <AlertDialogDescription>
+            This document has not been saved to a file. Save it, or discard it
+            permanently?
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => abandonPrompt?.resolve("cancel")}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => abandonPrompt?.resolve("discard")}
+          >
+            Discard
+          </Button>
+          <Button onClick={() => abandonPrompt?.resolve("save")}>Save…</Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+
   if (showSettings) {
     return (
       <div className="h-full min-h-0 flex flex-col bg-bg text-text">
@@ -313,6 +465,7 @@ export function PreviewApp({
           onBack={() => setShowSettings(false)}
           folderFeatures={false}
         />
+        {abandonDialog}
       </div>
     );
   }
@@ -342,12 +495,14 @@ export function PreviewApp({
         leadingMenu={
           <EditorWindowMenu
             onOpenSettings={() => setShowSettings(true)}
-            onOpenNotes={() => onOpenNotes?.()}
-            onOpenFile={setFilePath}
+            onOpenNotes={onOpenNotes ? openNotes : undefined}
+            onOpenFile={openFileInWindow}
             onSaveAs={isDraft ? saveAs : undefined}
           />
         }
       />
+
+      {abandonDialog}
 
       {paletteOpen && (
         <div
@@ -366,7 +521,7 @@ export function PreviewApp({
         previewNote={previewNote}
         onNewDocument={newDocument}
         onOpenFileDialog={openFileDialog}
-        onOpenNotes={onOpenNotes}
+        onOpenNotes={onOpenNotes ? openNotes : undefined}
       />
     </div>
   );

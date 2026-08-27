@@ -46,6 +46,10 @@ export async function saveDraftAs(
   return invoke("save_draft_as", { draftPath, targetPath });
 }
 
+export async function discardDraft(path: string): Promise<void> {
+  return invoke("discard_draft", { path });
+}
+
 export interface RecentEntry {
   path: string;
   name: string;

@@ -6,6 +6,13 @@ export function parentDirectory(path: string): string {
   return cut > 0 ? path.slice(0, cut) : path;
 }
 
+export function fileStem(path: string): string {
+  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  const name = cut >= 0 ? path.slice(cut + 1) : path;
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(0, dot) : name;
+}
+
 function decodeAssetUrl(url: string): string | null {
   const match = url.match(/^(?:asset:\/\/localhost\/|https?:\/\/asset\.localhost\/)(.+)$/);
   if (!match) return null;

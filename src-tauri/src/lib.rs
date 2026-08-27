@@ -493,7 +493,7 @@ impl Default for AppState {
 }
 
 // Utility: Sanitize filename from title
-fn sanitize_filename(title: &str) -> String {
+pub(crate) fn sanitize_filename(title: &str) -> String {
     let sanitized: String = title
         .chars()
         .filter(|c| *c != '\u{00A0}' && *c != '\u{FEFF}')
@@ -2169,6 +2169,82 @@ fn cleanup_stale_empty_drafts(app: &AppHandle) {
     }
 }
 
+fn normalize_lexically(path: &Path) -> PathBuf {
+    path.components().collect()
+}
+
+// An asset under drafts/assets survives only while some draft references it,
+// with a grace period so files pasted just before a crash are not lost.
+fn sweep_draft_assets(app: &AppHandle) {
+    let Ok(dir) = drafts_dir(app) else { return };
+    sweep_unreferenced_assets(&dir, Duration::from_secs(7 * 24 * 60 * 60));
+}
+
+fn sweep_unreferenced_assets(drafts_dir: &Path, min_age: Duration) {
+    let assets_root = drafts_dir.join("assets");
+    if !assets_root.is_dir() {
+        return;
+    }
+
+    let mut referenced: HashSet<PathBuf> = HashSet::new();
+    if let Ok(entries) = std::fs::read_dir(drafts_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|ext| ext != "md") {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for link in preprocess::image_links(&content) {
+                let Ok(decoded) = urlencoding::decode(&link) else {
+                    continue;
+                };
+                let relative = Path::new(decoded.as_ref());
+                if relative.is_absolute() {
+                    continue;
+                }
+                referenced.insert(normalize_lexically(&drafts_dir.join(relative)));
+            }
+        }
+    }
+
+    sweep_asset_dir(&assets_root, &referenced, min_age);
+}
+
+fn sweep_asset_dir(dir: &Path, referenced: &HashSet<PathBuf>, min_age: Duration) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    let mut emptied = true;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if !sweep_asset_dir(&path, referenced, min_age) {
+                emptied = false;
+            }
+            continue;
+        }
+        let old_enough = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|m| m.elapsed().ok())
+            .is_some_and(|age| age >= min_age);
+        if old_enough
+            && !referenced.contains(&normalize_lexically(&path))
+            && std::fs::remove_file(&path).is_ok()
+        {
+            continue;
+        }
+        emptied = false;
+    }
+    if emptied {
+        let _ = std::fs::remove_dir(dir);
+    }
+    emptied
+}
+
 #[tauri::command]
 fn get_default_window(state: State<AppState>) -> DefaultWindow {
     state.app_config.read().expect("app_config read lock").default_window
@@ -2216,7 +2292,7 @@ async fn save_draft_as(
     draft_path: String,
     target_path: String,
 ) -> Result<Vec<String>, String> {
-    if !is_draft_path(app, draft_path.clone()) {
+    if !is_draft_path(app.clone(), draft_path.clone()) {
         return Err("Not a draft file".into());
     }
 
@@ -2228,13 +2304,13 @@ async fn save_draft_as(
         .parent()
         .ok_or("Draft has no parent directory")?
         .to_path_buf();
-    let target_dir = Path::new(&target_path)
-        .parent()
-        .ok_or("Target has no parent directory")?
-        .to_path_buf();
+    if Path::new(&target_path).parent().is_none() {
+        return Err("Target has no parent directory".into());
+    }
+    let target = PathBuf::from(&target_path);
 
     let migration = tokio::task::spawn_blocking(move || {
-        preprocess::migrate_assets(&content, &source_dir, &target_dir)
+        preprocess::migrate_assets(&content, &source_dir, &target)
     })
     .await
     .map_err(|e| format!("Asset migration failed: {e}"))?;
@@ -2245,8 +2321,33 @@ async fn save_draft_as(
     fs::remove_file(&draft_path)
         .await
         .map_err(|e| format!("Saved, but the draft could not be removed: {e}"))?;
+    if migration.failed.is_empty() {
+        remove_draft_asset_dir(&app, &draft_path).await;
+    }
 
     Ok(migration.failed)
+}
+
+async fn remove_draft_asset_dir(app: &AppHandle, draft_path: &str) {
+    let Ok(dir) = drafts_dir(app) else { return };
+    let Some(stem) = Path::new(draft_path).file_stem() else {
+        return;
+    };
+    let _ = fs::remove_dir_all(dir.join("assets").join(stem)).await;
+}
+
+#[tauri::command]
+async fn discard_draft(app: AppHandle, path: String) -> Result<(), String> {
+    if !is_draft_path(app.clone(), path.clone()) {
+        return Err("Not a draft file".into());
+    }
+    if let Err(e) = fs::remove_file(&path).await {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            return Err(format!("Failed to discard draft: {e}"));
+        }
+    }
+    remove_draft_asset_dir(&app, &path).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -2562,7 +2663,21 @@ async fn import_file_to_folder(
             .await
         {
             Ok(mut file) => {
-                if file.write_all(content.as_bytes()).await.is_err() {
+                let source_dir = source
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_default();
+                let md = content.clone();
+                let target = candidate.clone();
+                let migration = tokio::task::spawn_blocking(move || {
+                    preprocess::migrate_assets(&md, &source_dir, &target)
+                })
+                .await;
+                let Ok(migration) = migration else {
+                    let _ = fs::remove_file(&candidate).await;
+                    return Err("Asset migration failed".to_string());
+                };
+                if file.write_all(migration.markdown.as_bytes()).await.is_err() {
                     // Clean up the empty file on write failure
                     let _ = fs::remove_file(&candidate).await;
                     return Err("Failed to write file".to_string());
@@ -2882,10 +2997,42 @@ fn copy_to_clipboard(app: AppHandle, text: String) -> Result<(), String> {
     app.clipboard().write_text(text).map_err(|e| e.to_string())
 }
 
+async fn allocate_asset_path(
+    folder: &str,
+    doc_stem: Option<&str>,
+    base_name: &str,
+    extension: &str,
+) -> Result<(PathBuf, String), String> {
+    let subdir = doc_stem.map(sanitize_filename);
+    let mut assets_dir = PathBuf::from(folder).join("assets");
+    if let Some(sub) = &subdir {
+        assets_dir = assets_dir.join(sub);
+    }
+    fs::create_dir_all(&assets_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut target_name = format!("{base_name}.{extension}");
+    let mut counter = 1;
+    let mut target_path = assets_dir.join(&target_name);
+    while target_path.exists() {
+        target_name = format!("{base_name}-{counter}.{extension}");
+        target_path = assets_dir.join(&target_name);
+        counter += 1;
+    }
+
+    let link = match &subdir {
+        Some(sub) => format!("assets/{sub}/{target_name}"),
+        None => format!("assets/{target_name}"),
+    };
+    Ok((target_path, link))
+}
+
 #[tauri::command]
 async fn save_clipboard_image(
     base64_data: String,
     target_dir: Option<String>,
+    doc_stem: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     // Guard against empty clipboard payload
@@ -2914,41 +3061,31 @@ async fn save_clipboard_image(
         return Err("Decoded image data is empty".to_string());
     }
 
-    // Create assets folder path
-    let assets_dir = PathBuf::from(&folder).join("assets");
-    fs::create_dir_all(&assets_dir)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // Generate unique filename with timestamp
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    let mut target_name = format!("screenshot-{}.png", timestamp);
-    let mut counter = 1;
-    let mut target_path = assets_dir.join(&target_name);
+    let (target_path, link) = allocate_asset_path(
+        &folder,
+        doc_stem.as_deref(),
+        &format!("screenshot-{timestamp}"),
+        "png",
+    )
+    .await?;
 
-    while target_path.exists() {
-        target_name = format!("screenshot-{}-{}.png", timestamp, counter);
-        target_path = assets_dir.join(&target_name);
-        counter += 1;
-    }
-
-    // Write the file
     fs::write(&target_path, &image_data)
         .await
         .map_err(|_| "Failed to write image".to_string())?;
 
-    // Return relative path
-    Ok(format!("assets/{}", target_name))
+    Ok(link)
 }
 
 #[tauri::command]
 async fn copy_image_to_assets(
     source_path: String,
     target_dir: Option<String>,
+    doc_stem: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let folder = match target_dir {
@@ -2990,30 +3127,15 @@ async fn copy_image_to_assets(
     // Sanitize the filename
     let sanitized_name = sanitize_filename(original_name);
 
-    // Create assets folder path
-    let assets_dir = PathBuf::from(&folder).join("assets");
-    fs::create_dir_all(&assets_dir)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // Generate unique filename
-    let mut target_name = format!("{}.{}", sanitized_name, extension);
-    let mut counter = 1;
-    let mut target_path = assets_dir.join(&target_name);
-
-    while target_path.exists() {
-        target_name = format!("{}-{}.{}", sanitized_name, counter, extension);
-        target_path = assets_dir.join(&target_name);
-        counter += 1;
-    }
+    let (target_path, link) =
+        allocate_asset_path(&folder, doc_stem.as_deref(), &sanitized_name, extension).await?;
 
     // Copy the file
     fs::copy(&source, &target_path)
         .await
         .map_err(|_| "Failed to copy image".to_string())?;
 
-    // Return both relative path and filename for frontend to construct the URL
-    Ok(format!("assets/{}", target_name))
+    Ok(link)
 }
 
 #[tauri::command]
@@ -4358,6 +4480,7 @@ pub fn run() {
             }
 
             cleanup_stale_empty_drafts(app.handle());
+            sweep_draft_assets(app.handle());
 
             // Global settings live in app config; folder-scoped keys stay with the folder.
             // Seed the global block once from a folder that predates the split.
@@ -4487,6 +4610,7 @@ pub fn run() {
             create_draft,
             new_editor_window,
             save_draft_as,
+            discard_draft,
             is_draft_path,
             list_export_fonts,
             get_active_export_preset,
@@ -4651,6 +4775,70 @@ mod tests {
         );
         assert_eq!(frontmatter_preset("---\ntitle: X\n---\n\nBody"), None);
         assert_eq!(frontmatter_preset("# No frontmatter\n\nexportPreset: X"), None);
+    }
+}
+
+#[cfg(test)]
+mod draft_asset_sweep_tests {
+    use super::sweep_unreferenced_assets;
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    fn setup(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("scratch-sweep-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("assets")).expect("mkdirs");
+        dir
+    }
+
+    fn touch(path: &Path) {
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdirs");
+        std::fs::write(path, b"x").expect("write");
+    }
+
+    #[test]
+    fn referenced_assets_survive_unreferenced_are_collected() {
+        let dir = setup("basic");
+        std::fs::write(
+            dir.join("draft-1.md"),
+            "![kept](<assets/draft-1/kept.png>) and ![enc](assets/draft-1/sp%20ace.png)",
+        )
+        .expect("write draft");
+        touch(&dir.join("assets/draft-1/kept.png"));
+        touch(&dir.join("assets/draft-1/sp ace.png"));
+        touch(&dir.join("assets/draft-1/orphan.png"));
+        touch(&dir.join("assets/legacy-flat.png"));
+        touch(&dir.join("assets/draft-gone/old.png"));
+
+        sweep_unreferenced_assets(&dir, Duration::ZERO);
+
+        assert!(dir.join("assets/draft-1/kept.png").is_file());
+        assert!(dir.join("assets/draft-1/sp ace.png").is_file());
+        assert!(!dir.join("assets/draft-1/orphan.png").exists());
+        assert!(!dir.join("assets/legacy-flat.png").exists());
+        assert!(!dir.join("assets/draft-gone").exists());
+    }
+
+    #[test]
+    fn young_unreferenced_assets_get_a_grace_period() {
+        let dir = setup("grace");
+        std::fs::write(dir.join("draft-1.md"), "no images yet").expect("write draft");
+        touch(&dir.join("assets/draft-1/just-pasted.png"));
+
+        sweep_unreferenced_assets(&dir, Duration::from_secs(3600));
+
+        assert!(dir.join("assets/draft-1/just-pasted.png").is_file());
+    }
+
+    #[test]
+    fn fully_swept_tree_removes_empty_folders() {
+        let dir = setup("empty");
+        touch(&dir.join("assets/draft-a/one.png"));
+        touch(&dir.join("assets/draft-b/two.png"));
+
+        sweep_unreferenced_assets(&dir, Duration::ZERO);
+
+        assert!(!dir.join("assets").exists());
     }
 }
 

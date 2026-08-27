@@ -47,10 +47,23 @@ pub struct AssetMigration {
     pub failed: Vec<String>,
 }
 
-// Copies draft-local images next to the saved file and rewrites their links.
-// A failed copy keeps the original link; the document itself must always save.
-pub fn migrate_assets(markdown: &str, source_dir: &Path, target_dir: &Path) -> AssetMigration {
-    let assets_dir = target_dir.join("assets");
+pub fn image_links(markdown: &str) -> Vec<String> {
+    IMAGE
+        .captures_iter(markdown)
+        .filter_map(|caps| caps.get(2).map(|m| m.as_str().to_string()))
+        .collect()
+}
+
+// Copies draft-local images into the saved file's asset subfolder and rewrites
+// their links. A failed copy keeps the original link; the document itself must
+// always save.
+pub fn migrate_assets(markdown: &str, source_dir: &Path, target_path: &Path) -> AssetMigration {
+    let target_dir = target_path.parent().unwrap_or(Path::new("."));
+    let doc_stem = target_path
+        .file_stem()
+        .map(|s| crate::sanitize_filename(&s.to_string_lossy()))
+        .unwrap_or_else(|| "Untitled".into());
+    let assets_dir = target_dir.join("assets").join(&doc_stem);
     let mut failed: Vec<String> = Vec::new();
 
     let rewritten = IMAGE
@@ -104,7 +117,7 @@ pub fn migrate_assets(markdown: &str, source_dir: &Path, target_dir: &Path) -> A
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or(name);
-                    format!("![{alt}](<assets/{new_name}>)")
+                    format!("![{alt}](<assets/{doc_stem}/{new_name}>)")
                 }
                 Err(_) => {
                     failed.push(name);

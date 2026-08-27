@@ -63,6 +63,7 @@ import { useOptionalNotes } from "../../context/NotesContext";
 import { useTheme } from "../../context/ThemeContext";
 import {
   absolutizeImageLinks,
+  fileStem,
   markdownFromEditor,
   parentDirectory,
 } from "../../lib/editorMarkdown";
@@ -650,6 +651,34 @@ export function Editor({
 
   // Keep ref in sync with current note ID
   currentNoteIdRef.current = currentNote?.id ?? null;
+
+  // Fresh document path for closures captured once at editor creation
+  const docPathRef = useRef<string | null>(null);
+  docPathRef.current = previewMode
+    ? previewMode.filePath
+    : (currentNote?.path ?? null);
+
+  // Imports an image into the document's asset subfolder and returns its asset URL
+  const importImageAsset = useCallback(
+    async (
+      command: "save_clipboard_image" | "copy_image_to_assets",
+      payload: Record<string, unknown>,
+    ): Promise<string> => {
+      const targetDir = previewMode
+        ? parentDirectory(previewMode.filePath)
+        : null;
+      const docPath = docPathRef.current;
+      const relativePath = await invoke<string>(command, {
+        ...payload,
+        targetDir,
+        docStem: docPath ? fileStem(docPath) : null,
+      });
+      const baseDir = targetDir ?? (await invoke<string>("get_notes_folder"));
+      const absolutePath = await join(baseDir, relativePath);
+      return convertFileSrc(absolutePath);
+    },
+    [previewMode],
+  );
 
   const getMarkdown = useCallback(
     (editorInstance: ReturnType<typeof useEditor>) =>
@@ -1366,21 +1395,10 @@ export function Editor({
               const base64 = (reader.result as string).split(",")[1]; // Remove data:image/...;base64, prefix
 
               try {
-                // Save clipboard image
-                const targetDir = previewMode
-                  ? parentDirectory(previewMode.filePath)
-                  : null;
-                const relativePath = await invoke<string>(
+                const assetUrl = await importImageAsset(
                   "save_clipboard_image",
-                  { base64Data: base64, targetDir },
+                  { base64Data: base64 },
                 );
-
-                const baseDir =
-                  targetDir ?? (await invoke<string>("get_notes_folder"));
-                const absolutePath = await join(baseDir, relativePath);
-
-                // Convert to Tauri asset URL
-                const assetUrl = convertFileSrc(absolutePath);
 
                 // Insert image
                 editorRef.current
@@ -1936,21 +1954,9 @@ export function Editor({
     });
     if (selected) {
       try {
-        // Copy image to assets folder and get relative path (assets/filename.ext)
-        const targetDir = previewMode
-          ? parentDirectory(previewMode.filePath)
-          : null;
-        const relativePath = await invoke<string>("copy_image_to_assets", {
+        const assetUrl = await importImageAsset("copy_image_to_assets", {
           sourcePath: selected as string,
-          targetDir,
         });
-
-        const baseDir =
-          targetDir ?? (await invoke<string>("get_notes_folder"));
-        const absolutePath = await join(baseDir, relativePath);
-
-        // Convert to Tauri asset URL
-        const assetUrl = convertFileSrc(absolutePath);
 
         // Insert image with asset URL
         editor.chain().focus().setImage({ src: assetUrl }).run();
@@ -1958,7 +1964,7 @@ export function Editor({
         console.error("Failed to add image:", error);
       }
     }
-  }, [editor]);
+  }, [editor, importImageAsset]);
 
   // Listen for slash command image insertion
   useEffect(() => {

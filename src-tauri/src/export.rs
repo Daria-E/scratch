@@ -701,21 +701,21 @@ mod tests {
         std::fs::create_dir_all(source.join("assets")).expect("mkdirs");
         std::fs::create_dir_all(&target).expect("mkdir target");
         std::fs::write(source.join("assets/pic.png"), b"png-bytes").expect("write asset");
-        std::fs::write(target.join("assets").join("x"), b"").ok();
 
         let md = "Before ![alt](<assets/pic.png>) after, remote ![r](https://x/y.png), missing ![m](assets/gone.png).";
-        let result = crate::preprocess::migrate_assets(md, &source, &target);
+        let target_doc = target.join("report.md");
+        let result = crate::preprocess::migrate_assets(md, &source, &target_doc);
 
-        assert!(result.markdown.contains("![alt](<assets/pic.png>)"));
+        assert!(result.markdown.contains("![alt](<assets/report/pic.png>)"));
         assert!(result.markdown.contains("https://x/y.png"));
         assert!(result.markdown.contains("assets/gone.png"));
         assert!(result.failed.is_empty());
         assert_eq!(
-            std::fs::read(target.join("assets/pic.png")).expect("copied"),
+            std::fs::read(target.join("assets/report/pic.png")).expect("copied"),
             b"png-bytes"
         );
 
-        let again = crate::preprocess::migrate_assets(md, &source, &target);
-        assert!(again.markdown.contains("![alt](<assets/pic-1.png>)"));
+        let again = crate::preprocess::migrate_assets(md, &source, &target_doc);
+        assert!(again.markdown.contains("![alt](<assets/report/pic-1.png>)"));
     }
 }
