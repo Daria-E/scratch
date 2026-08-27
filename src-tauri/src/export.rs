@@ -361,4 +361,65 @@ mod tests {
         .expect("compile with image");
         assert!(pdf.starts_with(b"%PDF"));
     }
+
+    const COVERAGE: &str = include_str!("../assets/export/coverage.md");
+
+    #[test]
+    fn coverage_fixture_compiles() {
+        let pdf = markdown_to_pdf(COVERAGE, &ExportSettings::default(), &[])
+            .expect("compile coverage fixture");
+        assert!(pdf.starts_with(b"%PDF"));
+        std::fs::write(
+            std::env::temp_dir().join("scratch-export-coverage.pdf"),
+            &pdf,
+        )
+        .expect("write coverage pdf");
+    }
+
+    #[test]
+    fn frontmatter_is_stripped() {
+        let prepared = crate::preprocess::prepare(
+            "---\ntitle: X\ntags: [a]\n---\n\n# Real heading\n",
+            "ltr",
+            &[],
+        );
+        let all: String = prepared.blocks.iter().map(|b| b.md.clone()).collect();
+        assert!(!all.contains("title: X"));
+        assert!(all.contains("# Real heading"));
+    }
+
+    #[test]
+    fn task_items_become_checkboxes() {
+        let prepared =
+            crate::preprocess::prepare("- [ ] todo\n- [x] done\n", "ltr", &[]);
+        let md = &prepared.blocks[0].md;
+        assert!(md.contains('\u{2610}') && md.contains('\u{2611}'));
+        assert!(!md.contains("[ ]") && !md.contains("[x]"));
+    }
+
+    #[test]
+    fn footnote_definitions_follow_their_reference() {
+        let source = "English text[^a] here.\n\n[^a]: English note.\n\nעברית[^b] כאן.\n\n[^b]: הערה.\n";
+        let prepared = crate::preprocess::prepare(source, "ltr", &[]);
+        assert_eq!(prepared.blocks.len(), 2);
+        let english = &prepared.blocks[0];
+        let hebrew = &prepared.blocks[1];
+        assert_eq!(english.dir, "ltr");
+        assert_eq!(hebrew.dir, "rtl");
+        assert!(english.md.contains("[^a]: English note."));
+        assert!(!english.md.contains("[^b]"));
+        assert!(hebrew.md.contains("[^b]: הערה."));
+    }
+
+    #[test]
+    fn long_notes_paginate() {
+        let body = (1..=120)
+            .map(|i| format!("Paragraph number {i} with enough text to take a full line of space."))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let pdf = markdown_to_pdf(&body, &ExportSettings::default(), &[])
+            .expect("compile long note");
+        std::fs::write(std::env::temp_dir().join("scratch-export-long.pdf"), &pdf)
+            .expect("write long pdf");
+    }
 }

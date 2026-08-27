@@ -18,6 +18,7 @@ A minimalist, offline-first markdown note-taking app for macOS, Windows, and Lin
 - **Syntax highlighting** - 20 languages with GitHub-inspired color scheme
 - **Mermaid diagrams** - Render flowcharts, sequence diagrams, and more in fenced code blocks
 - **KaTeX math** - Render block `$$...$$` math equations
+- **Typeset PDF export** - Real typesetting via an embedded Typst engine: page size, margins, typography, and correct bidirectional (Hebrew/Arabic) layout
 - **Wikilinks** - Type `[[` to link between notes with autocomplete
 - **Slash commands** - Type `/` to quickly insert headings, lists, code blocks, diagrams, and more
 - **Focus mode** - Distraction-free writing with animated sidebar/toolbar fade (`Cmd+Shift+Enter`)
@@ -99,6 +100,37 @@ Scratch is designed to be usable without a mouse. Here are the essentials to get
 **Note:** On Windows, use `Ctrl` instead of `Cmd` for all shortcuts.
 
 Many more shortcuts and features are available in the app—explore via the command palette (`Cmd+P` / `Ctrl+P`) or view the full reference in Settings → Shortcuts.
+
+## PDF Export
+
+Two paths, side by side in the export menu:
+
+- **Print as PDF** - hands the note to the system print dialog. Page size and margins
+  come from that dialog (on Linux the webview ignores CSS page rules entirely).
+- **Export PDF (typeset)** - compiles the note with an embedded [Typst](https://typst.app)
+  engine. Page size, margins, font size, line spacing, direction, and page numbers are
+  configured in Settings and applied deterministically on every platform.
+
+Typeset export supports headings, emphasis, strikethrough, inline and fenced code with
+syntax highlighting, ordered/unordered/nested lists, task lists, tables with alignment,
+blockquotes, footnotes, links, reference links, images, thematic breaks, and inline
+(`$...$`) and display (`$$...$$`) math in LaTeX syntax. YAML frontmatter is omitted from
+the output. Each block is typeset in its own text direction, so notes that mix Hebrew or
+Arabic with English render correctly in both.
+
+Known limitations:
+
+- Task list checkboxes render as `☐`/`☑` glyphs, not interactive form fields.
+- Wikilinks (`[[Note]]`) become plain text - there is no target to link to in a PDF.
+- Remote images (`http(s):`, `data:`) are not fetched; missing or remote images fall back
+  to their alt text.
+- Nested blockquotes render as indented text inside a single quote block.
+- Display math inside a list item is placed below the item rather than inline with it.
+- Mirrored characters typed as literal text (for example `∋`) are mirrored by the Unicode
+  bidi algorithm inside right-to-left paragraphs. Write them as math (`$\ni$`) to keep
+  the typed direction.
+- Copying formulas out of the produced PDF can yield garbled characters; the rendered
+  output is unaffected.
 
 ## Built With
 

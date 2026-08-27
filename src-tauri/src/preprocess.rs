@@ -9,6 +9,14 @@ static IMAGE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"!\[([^\]]*)\]\(<?([^)>\s]+)>?(\s+"[^"]*")?\)"#).unwrap());
 static LINK_DEFINITION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*\[[^\^\]]+\]:\s*\S+").unwrap());
+static FRONTMATTER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)\A\x{feff}?---[ \t]*\r?\n.*?\r?\n---[ \t]*(\r?\n|\z)").unwrap()
+});
+static TASK_ITEM: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^(\s*(?:[-*+]|\d+[.)])\s+)\[([ xX])\]\s+").unwrap()
+});
+static FOOTNOTE_DEFINITION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^\s*\[\^([^\]]+)\]:.*$").unwrap());
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Block {
@@ -23,8 +31,13 @@ pub struct Prepared {
 }
 
 pub fn prepare(markdown: &str, default_dir: &str, search_dirs: &[PathBuf]) -> Prepared {
-    let without_wikilinks = WIKILINK.replace_all(markdown, "$1").into_owned();
-    let (rewritten, images) = embed_images(&without_wikilinks, search_dirs);
+    let body = FRONTMATTER.replace(markdown, "");
+    let without_wikilinks = WIKILINK.replace_all(&body, "$1");
+    let with_checkboxes = TASK_ITEM.replace_all(&without_wikilinks, |caps: &regex::Captures| {
+        let checked = caps[2].to_ascii_lowercase() == "x";
+        format!("{}{} ", &caps[1], if checked { "\u{2611}" } else { "\u{2610}" })
+    });
+    let (rewritten, images) = embed_images(&with_checkboxes, search_dirs);
     let blocks = split_blocks(&rewritten, default_dir);
     Prepared { blocks, images }
 }
@@ -76,21 +89,28 @@ fn resolve_image(url: &str, search_dirs: &[PathBuf]) -> Option<Vec<u8>> {
 fn split_blocks(markdown: &str, default_dir: &str) -> Vec<Block> {
     let ranges = top_level_ranges(markdown);
 
-    let definitions: Vec<&str> = ranges
+    let mut definitions: Vec<&str> = Vec::new();
+    let mut footnotes: Vec<(String, &str)> = Vec::new();
+    let mut candidates: Vec<&str> = ranges
         .iter()
-        .map(|r| r.clone())
-        .collect::<Vec<_>>()
-        .windows(2)
-        .flat_map(|pair| markdown.get(pair[0].end..pair[1].start))
-        .chain(ranges.last().and_then(|last| markdown.get(last.end..)))
-        .flat_map(|gap| gap.lines())
-        .filter(|line| LINK_DEFINITION.is_match(line))
+        .filter_map(|range| markdown.get(range.clone()))
         .collect();
+    candidates.extend(gaps(markdown, &ranges));
+
+    for line in candidates.iter().flat_map(|text| text.lines()) {
+        if LINK_DEFINITION.is_match(line) {
+            definitions.push(line);
+        } else if let Some(caps) = FOOTNOTE_DEFINITION.captures(line) {
+            footnotes.push((caps[1].to_string(), line));
+        }
+    }
 
     let mut blocks: Vec<Block> = ranges
         .iter()
         .filter_map(|range| markdown.get(range.clone()))
+        .map(str::trim_end)
         .filter(|source| !source.trim().is_empty())
+        .filter(|source| !is_definition_only(source))
         .map(|source| Block {
             dir: block_direction(source, default_dir).to_string(),
             md: source.to_string(),
@@ -111,14 +131,44 @@ fn split_blocks(markdown: &str, default_dir: &str) -> Vec<Block> {
         }];
     }
 
-    if !definitions.is_empty() {
-        let suffix = format!("\n\n{}\n", definitions.join("\n"));
-        for block in &mut blocks {
-            block.md.push_str(&suffix);
+    for block in &mut blocks {
+        let mut appended: Vec<&str> = definitions.clone();
+        appended.extend(
+            footnotes
+                .iter()
+                .filter(|(label, _)| block.md.contains(&format!("[^{label}]")))
+                .map(|(_, line)| *line),
+        );
+        if !appended.is_empty() {
+            block.md.push_str(&format!("\n\n{}\n", appended.join("\n")));
         }
     }
 
     blocks
+}
+
+fn gaps<'a>(markdown: &'a str, ranges: &[std::ops::Range<usize>]) -> Vec<&'a str> {
+    let mut gaps = Vec::new();
+    let mut cursor = 0usize;
+    for range in ranges {
+        if range.start > cursor {
+            if let Some(text) = markdown.get(cursor..range.start) {
+                gaps.push(text);
+            }
+        }
+        cursor = cursor.max(range.end);
+    }
+    if let Some(text) = markdown.get(cursor..) {
+        gaps.push(text);
+    }
+    gaps
+}
+
+fn is_definition_only(source: &str) -> bool {
+    source
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .all(|line| LINK_DEFINITION.is_match(line) || FOOTNOTE_DEFINITION.is_match(line))
 }
 
 fn top_level_ranges(markdown: &str) -> Vec<std::ops::Range<usize>> {

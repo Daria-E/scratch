@@ -19,6 +19,13 @@
 
 #show raw: set text(dir: ltr, lang: "en")
 #show raw.where(block: true): it => align(left, it)
+#show quote.where(block: true): it => block(
+  width: 100%,
+  fill: luma(245),
+  inset: 0.8em,
+  radius: 2pt,
+  it.body,
+)
 
 #let markdown(source) = render(
   source,
