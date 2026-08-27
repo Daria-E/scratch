@@ -102,6 +102,20 @@ pub enum TextDirection {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     pub notes_folder: Option<String>,
+    #[serde(default, rename = "exportPresets")]
+    pub export_presets: Vec<ExportPreset>,
+    #[serde(default, rename = "activeExportPreset")]
+    pub active_export_preset: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportPreset {
+    pub name: String,
+    #[serde(default)]
+    pub settings: export::ExportSettings,
+    #[serde(default)]
+    pub template_file: Option<String>,
 }
 
 // Per-folder settings (stored in .scratch/settings.json within notes folder)
@@ -1833,18 +1847,174 @@ fn image_search_dirs(state: &State<AppState>, note_path: Option<&str>) -> Vec<Pa
     dirs
 }
 
+fn export_templates_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("No app data dir: {e}"))?
+        .join("export-templates");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create template dir: {e}"))?;
+    Ok(dir)
+}
+
+fn frontmatter_preset(markdown: &str) -> Option<String> {
+    let body = markdown.strip_prefix('\u{feff}').unwrap_or(markdown);
+    let rest = body.strip_prefix("---")?.trim_start_matches([' ', '\t']);
+    let rest = rest.strip_prefix('\n').or_else(|| rest.strip_prefix("\r\n"))?;
+    let end = rest.find("\n---")?;
+    rest[..end].lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        (key.trim() == "exportPreset").then(|| value.trim().trim_matches(['"', '\'']).to_string())
+    })
+}
+
+fn find_preset(state: &State<AppState>, name: &str) -> Option<ExportPreset> {
+    state
+        .app_config
+        .read()
+        .unwrap()
+        .export_presets
+        .iter()
+        .find(|preset| preset.name == name)
+        .cloned()
+}
+
+// Precedence: the note's own frontmatter, then settings sent by the caller, then the
+// active preset. Frontmatter wins so a document keeps its layout wherever it is exported.
+fn resolve_preset(
+    state: &State<AppState>,
+    markdown: &str,
+    caller_settings: &Option<export::ExportSettings>,
+) -> Option<ExportPreset> {
+    if let Some(preset) = frontmatter_preset(markdown).and_then(|name| find_preset(state, &name)) {
+        return Some(preset);
+    }
+    if caller_settings.is_some() {
+        return None;
+    }
+    let active = state.app_config.read().unwrap().active_export_preset.clone()?;
+    find_preset(state, &active)
+}
+
+#[tauri::command]
+fn list_export_presets(state: State<AppState>) -> Vec<ExportPreset> {
+    state.app_config.read().unwrap().export_presets.clone()
+}
+
+#[tauri::command]
+fn get_active_export_preset(state: State<AppState>) -> Option<String> {
+    state.app_config.read().unwrap().active_export_preset.clone()
+}
+
+#[tauri::command]
+fn save_export_preset(
+    app: AppHandle,
+    preset: ExportPreset,
+    state: State<AppState>,
+) -> Result<(), String> {
+    if preset.name.trim().is_empty() {
+        return Err("Preset name cannot be empty".into());
+    }
+    let mut config = state.app_config.write().unwrap();
+    match config
+        .export_presets
+        .iter_mut()
+        .find(|existing| existing.name == preset.name)
+    {
+        Some(existing) => *existing = preset,
+        None => config.export_presets.push(preset),
+    }
+    save_app_config(&app, &config).map_err(|e| format!("Failed to save presets: {e}"))
+}
+
+#[tauri::command]
+fn delete_export_preset(
+    app: AppHandle,
+    name: String,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let mut config = state.app_config.write().unwrap();
+    config.export_presets.retain(|preset| preset.name != name);
+    if config.active_export_preset.as_deref() == Some(name.as_str()) {
+        config.active_export_preset = None;
+    }
+    save_app_config(&app, &config).map_err(|e| format!("Failed to save presets: {e}"))
+}
+
+#[tauri::command]
+fn set_active_export_preset(
+    app: AppHandle,
+    name: Option<String>,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let mut config = state.app_config.write().unwrap();
+    if let Some(name) = &name {
+        if !config.export_presets.iter().any(|p| &p.name == name) {
+            return Err(format!("No preset named {name}"));
+        }
+    }
+    config.active_export_preset = name;
+    save_app_config(&app, &config).map_err(|e| format!("Failed to save presets: {e}"))
+}
+
+#[tauri::command]
+async fn import_export_template(
+    app: AppHandle,
+    source_path: String,
+) -> Result<export::TemplateImport, String> {
+    let source = fs::read_to_string(&source_path)
+        .await
+        .map_err(|e| format!("Failed to read template: {e}"))?;
+
+    let report = tokio::task::spawn_blocking({
+        let source = source.clone();
+        move || export::validate_template(&source)
+    })
+    .await
+    .map_err(|e| format!("Template validation failed: {e}"))??;
+
+    let file_name = Path::new(&source_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("Template has no file name")?;
+    let target = export_templates_dir(&app)?.join(file_name);
+    fs::write(&target, source)
+        .await
+        .map_err(|e| format!("Failed to store template: {e}"))?;
+
+    Ok(export::TemplateImport {
+        file_name: file_name.to_string(),
+        missing_fonts: report.missing_fonts,
+        declared_params: report.declared_params,
+    })
+}
+
 #[tauri::command]
 async fn export_pdf(
+    app: AppHandle,
     markdown: String,
     path: String,
     settings: Option<export::ExportSettings>,
     note_path: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let settings = settings.unwrap_or_default();
+    let preset = resolve_preset(&state, &markdown, &settings);
+    let settings = preset
+        .as_ref()
+        .map(|p| p.settings.clone())
+        .or(settings)
+        .unwrap_or_default();
+    let custom_template = match preset.as_ref().and_then(|p| p.template_file.clone()) {
+        Some(file) => Some(
+            fs::read_to_string(export_templates_dir(&app)?.join(file))
+                .await
+                .map_err(|e| format!("Failed to read preset template: {e}"))?,
+        ),
+        None => None,
+    };
     let search_dirs = image_search_dirs(&state, note_path.as_deref());
     let bytes = tokio::task::spawn_blocking(move || {
-        export::markdown_to_pdf(&markdown, &settings, &search_dirs)
+        export::markdown_to_pdf(&markdown, &settings, &search_dirs, custom_template.as_deref())
     })
     .await
     .map_err(|e| format!("Export task failed: {e}"))??;
@@ -3916,6 +4086,12 @@ pub fn run() {
             preview_note_name,
             write_file,
             export_pdf,
+            list_export_presets,
+            get_active_export_preset,
+            save_export_preset,
+            delete_export_preset,
+            set_active_export_preset,
+            import_export_template,
             search_notes,
             start_file_watcher,
             rebuild_search_index,
@@ -4053,4 +4229,25 @@ fn set_title_bar_theme(
         let _ = (app, is_dark, r, g, b);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::frontmatter_preset;
+
+    #[test]
+    fn reads_export_preset_from_frontmatter() {
+        let note = "---\ntitle: Thesis chapter\nexportPreset: Thesis A4\n---\n\nBody.\n";
+        assert_eq!(frontmatter_preset(note).as_deref(), Some("Thesis A4"));
+    }
+
+    #[test]
+    fn quoted_and_absent_preset_names() {
+        assert_eq!(
+            frontmatter_preset("---\nexportPreset: \"Quoted Name\"\n---\n").as_deref(),
+            Some("Quoted Name")
+        );
+        assert_eq!(frontmatter_preset("---\ntitle: X\n---\n\nBody"), None);
+        assert_eq!(frontmatter_preset("# No frontmatter\n\nexportPreset: X"), None);
+    }
 }

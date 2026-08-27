@@ -53,6 +53,31 @@ export interface ExportSettings {
   fontFamily?: string;
   direction?: TextDirection;
   pageNumbers?: boolean;
+  justify?: boolean;
+  hyphenate?: boolean;
+  paragraphSpacingEm?: number;
+  firstLineIndentEm?: number;
+  headingNumbering?: string;
+  pageNumberFormat?: string;
+  headerText?: string;
+  footerText?: string;
+  columns?: number;
+  footnoteSizePt?: number;
+  equationNumbering?: string;
+  preamble?: string;
+  params?: Record<string, string>;
+}
+
+export interface ExportPreset {
+  name: string;
+  settings: ExportSettings;
+  templateFile?: string;
+}
+
+export interface TemplateImport {
+  fileName: string;
+  missingFonts: string[];
+  declaredParams: string[];
 }
 
 // Per-folder settings (stored in .scratch/settings.json)

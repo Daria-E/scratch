@@ -1,7 +1,11 @@
 import type { Editor } from "@tiptap/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import type { ExportSettings } from "../types/note";
+import type {
+  ExportPreset,
+  ExportSettings,
+  TemplateImport,
+} from "../types/note";
 
 /**
  * Triggers the native print dialog for the editor content.
@@ -95,4 +99,32 @@ export async function exportTypesetPdf(
  */
 function sanitizeFilename(name: string): string {
   return name.replace(/[/\\?%*:|"<>]/g, "-").trim() || "note";
+}
+
+export async function listExportPresets(): Promise<ExportPreset[]> {
+  return invoke("list_export_presets");
+}
+
+export async function getActiveExportPreset(): Promise<string | null> {
+  return invoke("get_active_export_preset");
+}
+
+export async function saveExportPreset(preset: ExportPreset): Promise<void> {
+  return invoke("save_export_preset", { preset });
+}
+
+export async function deleteExportPreset(name: string): Promise<void> {
+  return invoke("delete_export_preset", { name });
+}
+
+export async function setActiveExportPreset(
+  name: string | null
+): Promise<void> {
+  return invoke("set_active_export_preset", { name });
+}
+
+export async function importExportTemplate(
+  sourcePath: string
+): Promise<TemplateImport> {
+  return invoke("import_export_template", { sourcePath });
 }
