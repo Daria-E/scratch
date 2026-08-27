@@ -106,6 +106,94 @@ pub struct AppConfig {
     pub export_presets: Vec<ExportPreset>,
     #[serde(default, rename = "activeExportPreset")]
     pub active_export_preset: Option<String>,
+    #[serde(default)]
+    pub ui: GlobalSettings,
+}
+
+// Settings that apply to the app itself, so they work with no notes folder set.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalSettings {
+    pub theme: Option<ThemeSettings>,
+    pub editor_font: Option<EditorFontSettings>,
+    pub text_direction: Option<TextDirection>,
+    pub editor_width: Option<String>,
+    pub custom_editor_width_px: Option<u32>,
+    pub sidebar_width_px: Option<u32>,
+    pub interface_zoom: Option<f32>,
+    pub custom_colors_light: Option<std::collections::HashMap<String, String>>,
+    pub custom_colors_dark: Option<std::collections::HashMap<String, String>>,
+    pub ollama_model: Option<String>,
+}
+
+// Settings that belong to a specific notes folder.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderSettings {
+    pub git_enabled: Option<bool>,
+    pub folders_enabled: Option<bool>,
+    pub pinned_note_ids: Option<Vec<String>>,
+    pub default_note_name: Option<String>,
+    pub ignored_patterns: Option<Vec<String>>,
+}
+
+impl GlobalSettings {
+    fn is_empty(&self) -> bool {
+        self.theme.is_none()
+            && self.editor_font.is_none()
+            && self.text_direction.is_none()
+            && self.editor_width.is_none()
+            && self.custom_editor_width_px.is_none()
+            && self.sidebar_width_px.is_none()
+            && self.interface_zoom.is_none()
+            && self.custom_colors_light.is_none()
+            && self.custom_colors_dark.is_none()
+            && self.ollama_model.is_none()
+    }
+}
+
+fn split_settings(settings: &Settings) -> (GlobalSettings, FolderSettings) {
+    (
+        GlobalSettings {
+            theme: Some(settings.theme.clone()),
+            editor_font: settings.editor_font.clone(),
+            text_direction: settings.text_direction.clone(),
+            editor_width: settings.editor_width.clone(),
+            custom_editor_width_px: settings.custom_editor_width_px,
+            sidebar_width_px: settings.sidebar_width_px,
+            interface_zoom: settings.interface_zoom,
+            custom_colors_light: settings.custom_colors_light.clone(),
+            custom_colors_dark: settings.custom_colors_dark.clone(),
+            ollama_model: settings.ollama_model.clone(),
+        },
+        FolderSettings {
+            git_enabled: settings.git_enabled,
+            folders_enabled: settings.folders_enabled,
+            pinned_note_ids: settings.pinned_note_ids.clone(),
+            default_note_name: settings.default_note_name.clone(),
+            ignored_patterns: settings.ignored_patterns.clone(),
+        },
+    )
+}
+
+fn merge_settings(global: &GlobalSettings, folder: &FolderSettings) -> Settings {
+    Settings {
+        theme: global.theme.clone().unwrap_or_default(),
+        editor_font: global.editor_font.clone(),
+        text_direction: global.text_direction.clone(),
+        editor_width: global.editor_width.clone(),
+        custom_editor_width_px: global.custom_editor_width_px,
+        sidebar_width_px: global.sidebar_width_px,
+        interface_zoom: global.interface_zoom,
+        custom_colors_light: global.custom_colors_light.clone(),
+        custom_colors_dark: global.custom_colors_dark.clone(),
+        ollama_model: global.ollama_model.clone(),
+        git_enabled: folder.git_enabled,
+        folders_enabled: folder.folders_enabled,
+        pinned_note_ids: folder.pinned_note_ids.clone(),
+        default_note_name: folder.default_note_name.clone(),
+        ignored_patterns: folder.ignored_patterns.clone(),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -808,12 +896,25 @@ fn load_settings(notes_folder: &str) -> Settings {
     }
 }
 
-// Save per-folder settings to disk
+// Save per-folder settings to disk (folder-scoped keys only; the rest is app config)
 fn save_settings(notes_folder: &str, settings: &Settings) -> Result<()> {
     let path = get_settings_path(notes_folder);
-    let content = serde_json::to_string_pretty(settings)?;
+    let (_, folder_settings) = split_settings(settings);
+    let content = serde_json::to_string_pretty(&folder_settings)?;
     std::fs::write(path, content)?;
     Ok(())
+}
+
+fn load_folder_settings(notes_folder: &str) -> FolderSettings {
+    let path = get_settings_path(notes_folder);
+    if path.exists() {
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|content| serde_json::from_str(&content).ok())
+            .unwrap_or_default()
+    } else {
+        FolderSettings::default()
+    }
 }
 
 // Clean up old entries from debounce map (entries older than 5 seconds)
@@ -867,7 +968,10 @@ fn initialize_notes_folder(app: &AppHandle, path_buf: &PathBuf, state: &AppState
     let _ = std::fs::remove_file(&write_test_path);
 
     // Load per-folder settings (starts fresh with defaults if none exist)
-    let settings = load_settings(&normalized_path);
+    let settings = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        merge_settings(&app_config.ui, &load_folder_settings(&normalized_path))
+    };
 
     // Update app config
     {
@@ -1785,12 +1889,17 @@ fn get_settings(state: State<AppState>) -> Settings {
 
 #[tauri::command]
 fn update_settings(
+    app: AppHandle,
     new_settings: Settings,
     state: State<AppState>,
 ) -> Result<(), String> {
+    let (global, _) = split_settings(&new_settings);
+
     let folder = {
-        let app_config = state.app_config.read().expect("app_config read lock");
-        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+        let mut app_config = state.app_config.write().expect("app_config write lock");
+        app_config.ui = global;
+        save_app_config(&app, &app_config).map_err(|e| e.to_string())?;
+        app_config.notes_folder.clone()
     };
 
     {
@@ -1798,8 +1907,10 @@ fn update_settings(
         *settings = new_settings;
     }
 
-    let settings = state.settings.read().expect("settings read lock");
-    save_settings(&folder, &settings).map_err(|e| e.to_string())?;
+    if let Some(folder) = folder {
+        let settings = state.settings.read().expect("settings read lock");
+        save_settings(&folder, &settings).map_err(|e| e.to_string())?;
+    }
 
     Ok(())
 }
@@ -3983,11 +4094,19 @@ pub fn run() {
                 }
             }
 
-            // Load per-folder settings if notes folder is set
-            let settings = if let Some(ref folder) = app_config.notes_folder {
-                load_settings(folder)
-            } else {
-                Settings::default()
+            // Global settings live in app config; folder-scoped keys stay with the folder.
+            // Seed the global block once from a folder that predates the split.
+            if app_config.ui.is_empty() {
+                if let Some(ref folder) = app_config.notes_folder {
+                    let (global, _) = split_settings(&load_settings(folder));
+                    app_config.ui = global;
+                    let _ = save_app_config(app.handle(), &app_config);
+                }
+            }
+
+            let settings = match app_config.notes_folder {
+                Some(ref folder) => merge_settings(&app_config.ui, &load_folder_settings(folder)),
+                None => merge_settings(&app_config.ui, &FolderSettings::default()),
             };
 
             // Initialize search index if notes folder is set
@@ -4257,5 +4376,62 @@ mod tests {
         );
         assert_eq!(frontmatter_preset("---\ntitle: X\n---\n\nBody"), None);
         assert_eq!(frontmatter_preset("# No frontmatter\n\nexportPreset: X"), None);
+    }
+}
+
+#[cfg(test)]
+mod settings_split_tests {
+    use super::*;
+
+    fn sample() -> Settings {
+        Settings {
+            theme: ThemeSettings {
+                mode: "dark".into(),
+                ..Default::default()
+            },
+            editor_font: Some(EditorFontSettings {
+                base_font_size: Some(17.0),
+                ..Default::default()
+            }),
+            text_direction: Some(TextDirection::Rtl),
+            sidebar_width_px: Some(320),
+            git_enabled: Some(true),
+            default_note_name: Some("{date}".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn global_keys_survive_a_round_trip_without_a_folder() {
+        let (global, folder) = split_settings(&sample());
+        let merged = merge_settings(&global, &FolderSettings::default());
+
+        assert_eq!(merged.theme.mode, "dark");
+        assert_eq!(
+            merged.editor_font.and_then(|f| f.base_font_size),
+            Some(17.0)
+        );
+        assert_eq!(merged.sidebar_width_px, Some(320));
+        assert!(matches!(merged.text_direction, Some(TextDirection::Rtl)));
+
+        assert_eq!(folder.git_enabled, Some(true));
+        assert_eq!(merged.git_enabled, None);
+    }
+
+    #[test]
+    fn folder_keys_return_when_a_folder_is_present() {
+        let (global, folder) = split_settings(&sample());
+        let merged = merge_settings(&global, &folder);
+
+        assert_eq!(merged.git_enabled, Some(true));
+        assert_eq!(merged.default_note_name.as_deref(), Some("{date}"));
+        assert_eq!(merged.theme.mode, "dark");
+    }
+
+    #[test]
+    fn empty_global_block_is_detected_for_seeding() {
+        assert!(GlobalSettings::default().is_empty());
+        let (global, _) = split_settings(&sample());
+        assert!(!global.is_empty());
     }
 }

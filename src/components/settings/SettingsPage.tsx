@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   ArrowLeftIcon,
   FolderIcon,
@@ -14,6 +14,7 @@ import { AppearanceSettingsSection } from "./EditorSettingsSection";
 import { ShortcutsSettingsSection } from "./ShortcutsSettingsSection";
 import { AboutSettingsSection } from "./AboutSettingsSection";
 import { ExportSettingsSection } from "./ExportSettingsSection";
+import { getNotesFolder } from "../../services/notes";
 import { ToolsSettingsSection } from "./ToolsSettingsSection";
 import { isWindows, mod, shortcut } from "../../lib/platform";
 
@@ -29,14 +30,21 @@ type SettingsTab =
   | "shortcuts"
   | "about";
 
-const tabs: {
+const allTabs: {
   id: SettingsTab;
   label: string;
   icon: typeof FolderIcon;
   shortcut: string;
+  needsFolder?: boolean;
 }[] = [
-  { id: "general", label: "Folder", icon: FolderIcon, shortcut: "1" },
-  { id: "tools", label: "Integrations", icon: IntegrationsIcon, shortcut: "2" },
+  { id: "general", label: "Folder", icon: FolderIcon, shortcut: "1", needsFolder: true },
+  {
+    id: "tools",
+    label: "Integrations",
+    icon: IntegrationsIcon,
+    shortcut: "2",
+    needsFolder: true,
+  },
   { id: "editor", label: "Appearance", icon: SwatchIcon, shortcut: "3" },
   { id: "export", label: "Export", icon: FileExportIcon, shortcut: "4" },
   { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon, shortcut: "5" },
@@ -44,8 +52,25 @@ const tabs: {
 ];
 
 export function SettingsPage({ onBack }: SettingsPageProps) {
+  const [hasFolder, setHasFolder] = useState<boolean | null>(null);
+  const tabs = useMemo(
+    () => allTabs.filter((tab) => !tab.needsFolder || hasFolder !== false),
+    [hasFolder]
+  );
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    getNotesFolder()
+      .then((folder) => setHasFolder(!!folder))
+      .catch(() => setHasFolder(false));
+  }, []);
+
+  useEffect(() => {
+    if (!tabs.some((tab) => tab.id === activeTab)) {
+      setActiveTab(tabs[0].id);
+    }
+  }, [tabs, activeTab]);
 
   // Reset scroll position when tab changes
   useEffect(() => {
