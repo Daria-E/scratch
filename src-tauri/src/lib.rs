@@ -116,6 +116,8 @@ pub struct ExportPreset {
     pub settings: export::ExportSettings,
     #[serde(default)]
     pub template_file: Option<String>,
+    #[serde(default)]
+    pub template_params: Vec<String>,
 }
 
 // Per-folder settings (stored in .scratch/settings.json within notes folder)

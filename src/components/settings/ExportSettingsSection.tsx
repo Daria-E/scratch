@@ -258,7 +258,11 @@ export function ExportSettingsSection() {
 
     try {
       const report = await importExportTemplate(selected);
-      await persist({ ...active, templateFile: report.fileName });
+      await persist({
+        ...active,
+        templateFile: report.fileName,
+        templateParams: report.declaredParams,
+      });
       if (report.missingFonts.length > 0) {
         toast.warning(
           `Template uses fonts not installed here: ${report.missingFonts.join(", ")}`
@@ -274,8 +278,22 @@ export function ExportSettingsSection() {
 
   const clearTemplate = useCallback(() => {
     if (!active) return;
-    void persist({ ...active, templateFile: undefined });
+    void persist({ ...active, templateFile: undefined, templateParams: [] });
   }, [active, persist]);
+
+  const updateParam = useCallback(
+    (name: string, value: string) => {
+      if (!active) return;
+      const params = { ...(active.settings.params ?? {}) };
+      if (value === "") {
+        delete params[name];
+      } else {
+        params[name] = value;
+      }
+      void persist({ ...active, settings: { ...active.settings, params } });
+    },
+    [active, persist]
+  );
 
   if (!active) {
     return (
@@ -639,6 +657,24 @@ export function ExportSettingsSection() {
               </Button>
             )}
           </div>
+
+          {(active.templateParams ?? []).length > 0 && (
+            <div className="space-y-2 border-t border-border border-dashed pt-3">
+              <p className="text-sm text-text font-medium">
+                Values this template asks for
+              </p>
+              {(active.templateParams ?? []).map((name) => (
+                <Row key={name} label={name}>
+                  <Input
+                    defaultValue={settings.params?.[name] ?? ""}
+                    key={`${active.name}-param-${name}`}
+                    onBlur={(e) => updateParam(name, e.target.value.trim())}
+                    className="w-full h-9"
+                  />
+                </Row>
+              ))}
+            </div>
+          )}
 
           <Row label="Extra Typst code" hint="Applied before the document">
             <span className="block text-xs text-text-muted text-center">

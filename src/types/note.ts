@@ -72,6 +72,7 @@ export interface ExportPreset {
   name: string;
   settings: ExportSettings;
   templateFile?: string;
+  templateParams?: string[];
 }
 
 export interface TemplateImport {
