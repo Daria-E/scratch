@@ -519,3 +519,8 @@ export function useGit() {
   }
   return context;
 }
+
+// Optional hook that returns null when outside a GitProvider (for editor windows)
+export function useOptionalGit() {
+  return useContext(GitContext);
+}

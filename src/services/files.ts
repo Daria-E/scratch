@@ -34,3 +34,14 @@ export async function importFileToFolder(
 ): Promise<ImportedNote> {
   return invoke("import_file_to_folder", { path });
 }
+
+export async function newEditorWindow(): Promise<void> {
+  return invoke("new_editor_window");
+}
+
+export async function saveDraftAs(
+  draftPath: string,
+  targetPath: string
+): Promise<void> {
+  return invoke("save_draft_as", { draftPath, targetPath });
+}

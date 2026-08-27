@@ -9,9 +9,9 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import { useNotes } from "../../context/NotesContext";
+import { useOptionalNotes } from "../../context/NotesContext";
 import { useTheme } from "../../context/ThemeContext";
-import { useGit } from "../../context/GitContext";
+import { useOptionalGit } from "../../context/GitContext";
 import * as notesService from "../../services/notes";
 import * as aiService from "../../services/ai";
 import {
@@ -20,7 +20,7 @@ import {
   exportTypesetPdf,
 } from "../../services/pdf";
 import { markdownFromEditor } from "../../lib/editorMarkdown";
-import type { Settings } from "../../types/note";
+import type { Note, Settings } from "../../types/note";
 import type { Editor } from "@tiptap/react";
 import {
   CommandItem,
@@ -56,7 +56,7 @@ import {
   FolderPlusIcon,
   KeyboardIcon,
 } from "../icons";
-import { mod, shift } from "../../lib/platform";
+import { mod, shift, shortcut } from "../../lib/platform";
 import type { AiProvider } from "../../services/ai";
 
 interface Command {
@@ -76,10 +76,20 @@ interface CommandPaletteProps {
   focusMode?: boolean;
   onToggleFocusMode?: () => void;
   editorRef?: React.RefObject<Editor | null>;
+  onLeaveNotes?: () => void;
+  previewNote?: Note | null;
+  onNewDocument?: () => void;
+  onOpenFileDialog?: () => void;
+  onOpenNotes?: () => void;
 }
 
 export function CommandPalette({
   open,
+  onLeaveNotes,
+  previewNote,
+  onNewDocument,
+  onOpenFileDialog,
+  onOpenNotes,
   onClose,
   onOpenSettings,
   onOpenShortcuts,
@@ -88,19 +98,16 @@ export function CommandPalette({
   onToggleFocusMode,
   editorRef,
 }: CommandPaletteProps) {
-  const {
-    notes,
-    selectNote,
-    createNote,
-    deleteNote,
-    currentNote,
-    refreshNotes,
-    pinNote,
-    unpinNote,
-    notesFolder,
-  } = useNotes();
+  const notesCtx = useOptionalNotes();
+  const gitCtx = useOptionalGit();
+  const notes = notesCtx?.notes ?? [];
+  const currentNote = notesCtx ? notesCtx.currentNote : (previewNote ?? null);
+  const notesFolder = notesCtx?.notesFolder ?? null;
   const { setTheme } = useTheme();
-  const { status, gitAvailable, gitEnabled, commit, sync, isSyncing } = useGit();
+  const status = gitCtx?.status ?? null;
+  const gitAvailable = gitCtx?.gitAvailable ?? false;
+  const gitEnabled = gitCtx?.gitEnabled ?? false;
+  const isSyncing = gitCtx?.isSyncing ?? false;
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -150,28 +157,70 @@ export function CommandPalette({
 
   // Memoize commands array
   const commands = useMemo<Command[]>(() => {
-    const baseCommands: Command[] = [
-      {
-        id: "new-note",
-        label: "New Note",
-        shortcut: `${mod} N`,
+    const baseCommands: Command[] = [];
+
+    if (notesCtx) {
+      baseCommands.push(
+        {
+          id: "new-note",
+          label: "New Note",
+          shortcut: shortcut(mod, "N"),
+          icon: <AddNoteIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
+          action: () => {
+            notesCtx.createNote();
+            onClose();
+          },
+        },
+        {
+          id: "new-folder",
+          label: "New Folder",
+          shortcut: undefined,
+          icon: <FolderPlusIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
+          action: () => {
+            onClose();
+            window.dispatchEvent(new CustomEvent("create-new-folder"));
+          },
+        },
+      );
+    }
+
+    if (onNewDocument) {
+      baseCommands.push({
+        id: "new-document",
+        label: "New Document",
+        shortcut: shortcut(mod, "N"),
         icon: <AddNoteIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
         action: () => {
-          createNote();
+          onNewDocument();
           onClose();
         },
-      },
-      {
-        id: "new-folder",
-        label: "New Folder",
-        shortcut: undefined,
-        icon: <FolderPlusIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
+      });
+    }
+
+    if (onOpenFileDialog) {
+      baseCommands.push({
+        id: "open-file",
+        label: "Open File…",
+        shortcut: shortcut(mod, "O"),
+        icon: <FolderIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
         action: () => {
           onClose();
-          window.dispatchEvent(new CustomEvent("create-new-folder"));
+          onOpenFileDialog();
         },
-      },
-    ];
+      });
+    }
+
+    if (onOpenNotes) {
+      baseCommands.push({
+        id: "open-notes",
+        label: "Open Notes",
+        icon: <FolderIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
+        action: () => {
+          onOpenNotes();
+          onClose();
+        },
+      });
+    }
 
     // Add note-specific commands if a note is selected
     if (currentNote) {
@@ -222,50 +271,55 @@ export function CommandPalette({
           })
         : [];
 
-      baseCommands.push(
-        {
-          id: isPinned ? "unpin-note" : "pin-note",
-          label: isPinned ? "Unpin Current Note" : "Pin Current Note",
-          icon: <PinIcon className="w-5 h-5 stroke-[1.3]" />,
-          action: async () => {
-            try {
-              if (isPinned) {
-                await unpinNote(currentNote.id);
-              } else {
-                await pinNote(currentNote.id);
+      if (notesCtx) {
+        baseCommands.push(
+          {
+            id: isPinned ? "unpin-note" : "pin-note",
+            label: isPinned ? "Unpin Current Note" : "Pin Current Note",
+            icon: <PinIcon className="w-5 h-5 stroke-[1.3]" />,
+            action: async () => {
+              try {
+                if (isPinned) {
+                  await notesCtx.unpinNote(currentNote.id);
+                } else {
+                  await notesCtx.pinNote(currentNote.id);
+                }
+                onClose();
+              } catch (error) {
+                console.error("Failed to pin/unpin note:", error);
+                toast.error(`Failed to ${isPinned ? "unpin" : "pin"} note`);
               }
-              onClose();
-            } catch (error) {
-              console.error("Failed to pin/unpin note:", error);
-              toast.error(`Failed to ${isPinned ? "unpin" : "pin"} note`);
-            }
+            },
           },
-        },
-        ...aiCommands,
-        {
-          id: "duplicate-note",
-          label: "Duplicate Current Note",
-          icon: <CopyIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
-          action: async () => {
-            try {
-              const newNote = await duplicateNote(currentNote.id);
-              await refreshNotes();
-              selectNote(newNote.id);
-              onClose();
-            } catch (error) {
-              console.error("Failed to duplicate note:", error);
-            }
+          ...aiCommands,
+          {
+            id: "duplicate-note",
+            label: "Duplicate Current Note",
+            icon: <CopyIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
+            action: async () => {
+              try {
+                const newNote = await duplicateNote(currentNote.id);
+                await notesCtx.refreshNotes();
+                notesCtx.selectNote(newNote.id);
+                onClose();
+              } catch (error) {
+                console.error("Failed to duplicate note:", error);
+              }
+            },
           },
-        },
-        {
-          id: "delete-note",
-          label: "Delete Current Note",
-          icon: <TrashIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
-          action: () => {
-            setNoteToDelete(currentNote.id);
-            setDeleteDialogOpen(true);
+          {
+            id: "delete-note",
+            label: "Delete Current Note",
+            icon: <TrashIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
+            action: () => {
+              setNoteToDelete(currentNote.id);
+              setDeleteDialogOpen(true);
+            },
           },
-        },
+        );
+      }
+
+      baseCommands.push(
         {
           id: "copy-markdown",
           label: "Copy Markdown",
@@ -315,6 +369,15 @@ export function CommandPalette({
               console.error("Failed to copy HTML:", error);
               toast.error("Failed to copy");
             }
+          },
+        },
+        {
+          id: "blank-document",
+          label: "Blank document (no notes folder)",
+          icon: <AddNoteIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
+          action: () => {
+            onLeaveNotes?.();
+            onClose();
           },
         },
         {
@@ -403,7 +466,7 @@ export function CommandPalette({
           label: "Git: Quick Commit",
           icon: <GitCommitIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
           action: async () => {
-            const success = await commit("Quick commit from Scratch");
+            const success = await gitCtx!.commit("Quick commit from Scratch");
             if (success) {
               toast.success("Changes committed");
             } else {
@@ -420,7 +483,7 @@ export function CommandPalette({
           label: "Git: Sync (Pull and Push)",
           icon: <RefreshCwIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
           action: async () => {
-            const result = await sync();
+            const result = await gitCtx!.sync();
             if (result.ok) {
               toast.success(result.message);
             } else {
@@ -527,25 +590,22 @@ export function CommandPalette({
 
     return baseCommands;
   }, [
-    createNote,
+    notesCtx,
+    gitCtx,
     currentNote,
-    deleteNote,
     onClose,
     onOpenSettings,
     onOpenAiModal,
+    onNewDocument,
+    onOpenFileDialog,
+    onOpenNotes,
     availableAiProviders,
     setTheme,
     gitEnabled,
     gitAvailable,
     status,
-    commit,
-    sync,
     isSyncing,
-    selectNote,
-    refreshNotes,
     settings,
-    pinNote,
-    unpinNote,
     focusMode,
     onToggleFocusMode,
     notesFolder,
@@ -622,12 +682,12 @@ export function CommandPalette({
         label: cleanTitle(note.title),
         preview: note.preview,
         action: () => {
-          selectNote(note.id);
+          notesCtx?.selectNote(note.id);
           onClose();
         },
       })),
     ],
-    [filteredNotes, filteredCommands, selectNote, onClose],
+    [filteredNotes, filteredCommands, notesCtx, onClose],
   );
 
   // Reset state when opened
@@ -655,9 +715,9 @@ export function CommandPalette({
   }, [selectedIndex]);
 
   const handleDeleteConfirm = useCallback(async () => {
-    if (noteToDelete) {
+    if (noteToDelete && notesCtx) {
       try {
-        await deleteNote(noteToDelete);
+        await notesCtx.deleteNote(noteToDelete);
         setNoteToDelete(null);
         setDeleteDialogOpen(false);
         onClose();
@@ -666,7 +726,7 @@ export function CommandPalette({
         toast.error("Failed to delete note");
       }
     }
-  }, [noteToDelete, deleteNote, onClose]);
+  }, [noteToDelete, notesCtx, onClose]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {

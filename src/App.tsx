@@ -1,17 +1,18 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { NotesProvider, useNotes } from "./context/NotesContext";
-import { ThemeProvider, useTheme } from "./context/ThemeContext";
+import { useTheme } from "./context/ThemeContext";
 import { listen } from "@tauri-apps/api/event";
 import { createDraft, getDefaultWindow } from "./services/notes";
 import { GitProvider } from "./context/GitContext";
-import { TooltipProvider, Toaster } from "./components/ui";
 import { Sidebar } from "./components/layout/Sidebar";
 import { SidebarResizeHandle } from "./components/layout/SidebarResizeHandle";
 import { SIDEBAR_DEFAULT_PX } from "./lib/sidebar";
 import { Editor } from "./components/editor/Editor";
 import type { Editor as TiptapEditor } from "@tiptap/react";
 import { FolderPicker } from "./components/layout/FolderPicker";
+import { WindowShell, useWindowShell } from "./components/WindowShell";
+import { EditorWindowMenu } from "./components/preview/EditorWindowMenu";
 import { CommandPalette } from "./components/command-palette/CommandPalette";
 import { SettingsPage } from "./components/settings";
 import {
@@ -23,7 +24,6 @@ import {
 } from "./components/icons";
 import { AiEditModal } from "./components/ai/AiEditModal";
 import { AiResponseToast } from "./components/ai/AiResponseToast";
-import { KeyboardShortcutsModal } from "./components/shortcuts/KeyboardShortcutsModal";
 import { PreviewApp } from "./components/preview/PreviewApp";
 import {
   check as checkForUpdate,
@@ -50,7 +50,11 @@ function getWindowMode(): {
 
 type ViewState = "notes" | "settings";
 
-function AppContent() {
+interface AppContentProps {
+  onLeaveNotes?: () => void;
+}
+
+function AppContent({ onLeaveNotes }: AppContentProps) {
   const {
     notesFolder,
     isLoading,
@@ -65,16 +69,14 @@ function AppContent() {
     currentNote,
     syncNotesFolder,
   } = useNotes();
-  const { interfaceZoom, setInterfaceZoom, reloadSettings } = useTheme();
-  const interfaceZoomRef = useRef(interfaceZoom);
-  interfaceZoomRef.current = interfaceZoom;
+  const { reloadSettings } = useTheme();
+  const { openShortcutsModal } = useWindowShell();
   const currentNoteRef = useRef(currentNote);
   currentNoteRef.current = currentNote;
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [view, setView] = useState<ViewState>("notes");
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [aiModalOpen, setAiModalOpen] = useState(false);
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [aiEditing, setAiEditing] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [aiProvider, setAiProvider] = useState<AiProvider>("claude");
@@ -214,32 +216,6 @@ function AppContent() {
         return;
       }
 
-      // Cmd+= or Cmd++ - Zoom in (works everywhere, including settings)
-      if ((e.metaKey || e.ctrlKey) && (e.key === "=" || e.key === "+")) {
-        e.preventDefault();
-        setInterfaceZoom((prev) => prev + 0.05);
-        const newZoom = Math.round(Math.min(interfaceZoomRef.current + 0.05, 1.5) * 20) / 20;
-        toast(`Zoom ${Math.round(newZoom * 100)}%`, { id: "zoom", duration: 1500 });
-        return;
-      }
-
-      // Cmd+- - Zoom out (works everywhere, including settings)
-      if ((e.metaKey || e.ctrlKey) && (e.key === "-" || e.key === "_")) {
-        e.preventDefault();
-        setInterfaceZoom((prev) => prev - 0.05);
-        const newZoom = Math.round(Math.max(interfaceZoomRef.current - 0.05, 0.7) * 20) / 20;
-        toast(`Zoom ${Math.round(newZoom * 100)}%`, { id: "zoom", duration: 1500 });
-        return;
-      }
-
-      // Cmd+0 - Reset zoom (works everywhere, including settings)
-      if ((e.metaKey || e.ctrlKey) && e.key === "0") {
-        e.preventDefault();
-        setInterfaceZoom(1.0);
-        toast("Zoom 100%", { id: "zoom", duration: 1500 });
-        return;
-      }
-
       // Block all other shortcuts when in settings view
       if (view === "settings") {
         return;
@@ -293,13 +269,6 @@ function AppContent() {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "p") {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("print-note"));
-        return;
-      }
-
-      // Cmd+/ - Open keyboard shortcuts
-      if ((e.metaKey || e.ctrlKey) && e.key === "/") {
-        e.preventDefault();
-        setShortcutsOpen(true);
         return;
       }
 
@@ -444,7 +413,6 @@ function AppContent() {
     toggleFocusMode,
     focusMode,
     view,
-    setInterfaceZoom,
   ]);
 
   const handleClosePalette = useCallback(() => {
@@ -464,7 +432,7 @@ function AppContent() {
   }
 
   if (!notesFolder) {
-    return <FolderPicker />;
+    return <FolderPicker onCancel={onLeaveNotes} />;
   }
 
   return (
@@ -489,6 +457,12 @@ function AppContent() {
               onEditorReady={(editor) => {
                 editorRef.current = editor;
               }}
+              leadingMenu={
+                <EditorWindowMenu
+                  onNewDocument={onLeaveNotes}
+                  onOpenSettings={toggleSettings}
+                />
+              }
             />
           </>
         )}
@@ -505,16 +479,11 @@ function AppContent() {
         />
       )}
 
-      <KeyboardShortcutsModal
-        open={shortcutsOpen}
-        onClose={() => setShortcutsOpen(false)}
-      />
-
       <CommandPalette
         open={paletteOpen}
         onClose={handleClosePalette}
         onOpenSettings={toggleSettings}
-        onOpenShortcuts={() => setShortcutsOpen(true)}
+        onOpenShortcuts={openShortcutsModal}
         onOpenAiModal={(provider) => {
           setAiProvider(provider);
           setAiModalOpen(true);
@@ -522,6 +491,7 @@ function AppContent() {
         focusMode={focusMode}
         onToggleFocusMode={toggleFocusMode}
         editorRef={editorRef}
+        onLeaveNotes={onLeaveNotes}
       />
       <AiEditModal
         open={aiModalOpen}
@@ -641,6 +611,7 @@ function App() {
   // With no file in the URL, the default-window setting decides whether this window is
   // an editor window (opened on a fresh draft) or the notes library.
   const [editorFile, setEditorFile] = useState<string | null>(null);
+  const [showNotes, setShowNotes] = useState(false);
   const [resolvingWindowKind, setResolvingWindowKind] = useState(!isPreview);
 
   useEffect(() => {
@@ -689,17 +660,30 @@ function App() {
   }, [isPreview]);
 
   // Editor window: one file (or a fresh draft), no sidebar, search or git
-  const editorWindowFile =
-    isPreview && previewFile ? decodeURIComponent(previewFile) : editorFile;
+  const onLeaveNotes = useCallback(async () => {
+    try {
+      if (!editorFile) setEditorFile(await createDraft());
+      setShowNotes(false);
+    } catch (error) {
+      console.error("Failed to return to the editor:", error);
+      toast.error("Failed to open a blank document");
+    }
+  }, [editorFile]);
+
+  const editorWindowFile = showNotes
+    ? null
+    : isPreview && previewFile
+      ? decodeURIComponent(previewFile)
+      : editorFile;
 
   if (editorWindowFile) {
     return (
-      <ThemeProvider>
-        <Toaster />
-        <TooltipProvider>
-          <PreviewApp filePath={editorWindowFile} />
-        </TooltipProvider>
-      </ThemeProvider>
+      <WindowShell>
+        <PreviewApp
+          filePath={editorWindowFile}
+          onOpenNotes={() => setShowNotes(true)}
+        />
+      </WindowShell>
     );
   }
 
@@ -709,16 +693,13 @@ function App() {
 
   // Folder mode: full app with sidebar, search, git, etc.
   return (
-    <ThemeProvider>
-      <Toaster />
-      <TooltipProvider>
-        <NotesProvider>
-          <GitProvider>
-            <AppContent />
-          </GitProvider>
-        </NotesProvider>
-      </TooltipProvider>
-    </ThemeProvider>
+    <WindowShell>
+      <NotesProvider>
+        <GitProvider>
+          <AppContent onLeaveNotes={onLeaveNotes} />
+        </GitProvider>
+      </NotesProvider>
+    </WindowShell>
   );
 }
 

@@ -485,6 +485,7 @@ interface EditorProps {
   sidebarVisible?: boolean;
   focusMode?: boolean;
   previewMode?: PreviewModeData;
+  leadingMenu?: React.ReactNode;
   onEditorReady?: (editor: TiptapEditor | null) => void;
   onSaveToFolder?: () => void;
   saveToFolderDisabled?: boolean;
@@ -549,6 +550,7 @@ export function Editor({
   focusMode,
   onEditorReady,
   previewMode,
+  leadingMenu,
   onSaveToFolder,
   saveToFolderDisabled,
 }: EditorProps) {
@@ -2436,7 +2438,7 @@ export function Editor({
       <div
         className={cn(
           "h-11 shrink-0 flex items-center justify-between px-3",
-          !isSidebarActive && !isWindows && "pl-22",
+          !isSidebarActive && isMac && "pl-22",
         )}
         data-tauri-drag-region
       >
@@ -2456,6 +2458,7 @@ export function Editor({
               <PanelLeftIcon className="w-4.5 h-4.5 stroke-[1.5]" />
             </IconButton>
           )}
+          {leadingMenu}
           <span className="text-xs text-text-muted mb-px truncate">
             {formatDateTime(currentNote.modified)}
           </span>

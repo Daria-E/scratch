@@ -2084,6 +2084,32 @@ async fn create_draft(app: AppHandle) -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+// Moves a draft to a user-chosen location. Asset migration lands with image support.
+#[tauri::command]
+async fn save_draft_as(app: AppHandle, draft_path: String, target_path: String) -> Result<(), String> {
+    if !is_draft_path(app, draft_path.clone()) {
+        return Err("Not a draft file".into());
+    }
+
+    let content = fs::read_to_string(&draft_path)
+        .await
+        .map_err(|e| format!("Failed to read draft: {e}"))?;
+    fs::write(&target_path, content)
+        .await
+        .map_err(|e| format!("Failed to write file: {e}"))?;
+    fs::remove_file(&draft_path)
+        .await
+        .map_err(|e| format!("Saved, but the draft could not be removed: {e}"))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn new_editor_window(app: AppHandle) -> Result<(), String> {
+    let path = create_draft(app.clone()).await?;
+    create_preview_window(&app, &path)
+}
+
 #[tauri::command]
 fn is_draft_path(app: AppHandle, path: String) -> bool {
     match drafts_dir(&app) {
@@ -4294,6 +4320,8 @@ pub fn run() {
             get_default_window,
             set_default_window,
             create_draft,
+            new_editor_window,
+            save_draft_as,
             is_draft_path,
             list_export_fonts,
             get_active_export_preset,

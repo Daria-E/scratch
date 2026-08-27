@@ -20,6 +20,8 @@ import { isWindows, mod, shortcut } from "../../lib/platform";
 
 interface SettingsPageProps {
   onBack: () => void;
+  // Folder tabs need NotesProvider/GitProvider, which only the notes window mounts.
+  folderFeatures?: boolean;
 }
 
 type SettingsTab =
@@ -51,13 +53,21 @@ const allTabs: {
   { id: "about", label: "About", icon: InfoIcon, shortcut: "6" },
 ];
 
-export function SettingsPage({ onBack }: SettingsPageProps) {
+export function SettingsPage({
+  onBack,
+  folderFeatures = true,
+}: SettingsPageProps) {
   const [hasFolder, setHasFolder] = useState<boolean | null>(null);
   const tabs = useMemo(
-    () => allTabs.filter((tab) => !tab.needsFolder || hasFolder !== false),
-    [hasFolder]
+    () =>
+      allTabs.filter(
+        (tab) => !tab.needsFolder || (folderFeatures && hasFolder === true)
+      ),
+    [folderFeatures, hasFolder]
   );
-  const [activeTab, setActiveTab] = useState<SettingsTab>("general");
+  const [activeTab, setActiveTab] = useState<SettingsTab>(
+    folderFeatures ? "general" : "editor"
+  );
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

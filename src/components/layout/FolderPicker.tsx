@@ -4,7 +4,11 @@ import { useTheme } from "../../context/ThemeContext";
 import { Button } from "../ui";
 import { isWindows } from "../../lib/platform";
 
-export function FolderPicker() {
+interface FolderPickerProps {
+  onCancel?: () => void;
+}
+
+export function FolderPicker({ onCancel }: FolderPickerProps) {
   const { setNotesFolder } = useNotes();
   const { reloadSettings } = useTheme();
 
@@ -71,6 +75,13 @@ export function FolderPicker() {
             <Button onClick={handleSelectFolder} size="xl">
               Choose your notes folder
             </Button>
+            {onCancel && (
+              <div className="mt-3">
+                <Button onClick={onCancel} variant="ghost" size="sm">
+                  Back to editor
+                </Button>
+              </div>
+            )}
           </div>
 
           <p

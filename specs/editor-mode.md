@@ -123,6 +123,36 @@ Fixed by E4: `save_clipboard_image`, `copy_image_to_assets` (see Images).
 Degrades on its own: wikilink autocomplete reads its note list from editor storage and
 returns no suggestions when absent (`WikilinkSuggestion.tsx:40`).
 
+## Invariants (added after E3 review)
+
+Three bug classes surfaced while testing E3; each is an invariant to hold, not a list of
+patches.
+
+**A. No dual-host capability drift.** The notes window (`AppContent`) and editor windows
+(`PreviewApp`) are two hosts for the same app; every window-level capability must live in
+a shared shell, not be hand-copied. Symptoms found: zoom shortcuts, settings access, and
+save existed in one host only (zoom is applied in `ThemeProvider`, so only the bindings
+were missing). Fix: a `WindowShell` owning providers, Toaster, error boundary, and the
+window-agnostic shortcuts (zoom, settings). The AI modal stays notes-only. The command
+palette is capability-gated (decision revised 2026-08-27): it uses optional contexts and
+builds its command list from what the window provides, so editor windows get the
+document commands (copy, export, view toggles, settings) and notes windows additionally
+get note, search, git and AI commands.
+
+**B. One Editor instance edits exactly one document.** `Editor.tsx` assumes its note id
+changes only when a save renames the file; its rename heuristic
+(`Editor.tsx:1625`) adopts a new id without reloading content when the content matches
+the last save. Swapping the file path inside a live instance violates this and produced
+the E3 open-file failures plus a stale-flush risk (a pending autosave writing the old
+document into the newly opened file). Rule: changing the document means remounting the
+Editor (`key={filePath}`); never thread a path swap through the instance. The unmount
+cleanup flushes pending saves (`Editor.tsx:1756`) before the new path is adopted, which
+makes the remount ordering-safe.
+
+**C. No silent failure.** A render error must show an in-window message, not a blank
+screen; load/save failures must surface as toasts, not console lines. Every window kind
+mounts an error boundary.
+
 ## Milestones
 
 - E1: settings become folder-optional — category split, `update_settings` no longer
@@ -131,6 +161,9 @@ returns no suggestions when absent (`WikilinkSuggestion.tsx:40`).
 - E2: app starts without a folder — `defaultWindow` setting, editor window opens to a
   draft, folder picker only when the notes window is requested.
 - E3: header menu — New, Open, Settings, Open notes folder.
+- E3h: hardening from review — per-window error boundary, surfaced load/save errors,
+  keyed Editor remount for in-window file switching, `WindowShell` for the shared
+  window-level layer (invariants A–C).
 - E4: recents, drafts and assets — app-config recents list with stale handling; draft
   creation, save-as and recovery; startup cleanup; target-directory image commands and
   asset migration on save.
