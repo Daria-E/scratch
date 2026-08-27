@@ -11,7 +11,7 @@ import {
   SettingsIcon,
 } from "../icons";
 import { cn } from "../../lib/utils";
-import { mod, isMac } from "../../lib/platform";
+import { mod, shortcut } from "../../lib/platform";
 
 interface FooterProps {
   onOpenSettings?: () => void;
@@ -162,7 +162,7 @@ export const Footer = memo(function Footer({ onOpenSettings }: FooterProps) {
       <div className="absolute bottom-3 right-3">
         <IconButton
           onClick={onOpenSettings}
-          title={`Settings (${mod}${isMac ? "" : "+"}, to toggle)`}
+          title={`Settings (${shortcut(mod, ",")} to toggle)`}
           className="rounded-lg bg-bg-secondary border border-border hover:bg-bg-muted backdrop-blur-sm w-8 h-8"
         >
           <SettingsIcon className="w-4.5 h-4.5 stroke-[1.5]" />
@@ -220,7 +220,7 @@ export const Footer = memo(function Footer({ onOpenSettings }: FooterProps) {
           )}
           <IconButton
             onClick={onOpenSettings}
-            title={`Settings (${mod}${isMac ? "" : "+"}, to toggle)`}
+            title={`Settings (${shortcut(mod, ",")} to toggle)`}
           >
             <SettingsIcon className="w-4.5 h-4.5 stroke-[1.5]" />
           </IconButton>

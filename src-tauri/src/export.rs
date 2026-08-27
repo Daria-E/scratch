@@ -106,7 +106,7 @@ impl ExportSettings {
             paper: typst_paper(self.paper_size.as_deref()),
             margin: format!("{}mm", self.margin_mm.unwrap_or(20.0)),
             font_size: format!("{}pt", self.font_size_pt.unwrap_or(11.0)),
-            leading: format!("{}em", self.line_spacing.unwrap_or(0.75)),
+            leading: format!("{}em", leading_em(self.line_spacing)),
             fonts,
             lang: if dir == "rtl" { "he".into() } else { "en".into() },
             dir: dir.into(),
@@ -130,6 +130,14 @@ impl ExportSettings {
             params: self.params.clone(),
         }
     }
+}
+
+// Users think in line-height multiples (1 = single, 2 = double); Typst wants the gap
+// between lines, whose single-spaced value is 0.65em.
+const SINGLE_LEADING_EM: f64 = 0.65;
+
+fn leading_em(multiplier: Option<f64>) -> f64 {
+    (multiplier.unwrap_or(1.0).clamp(0.5, 4.0) * SINGLE_LEADING_EM * 1000.0).round() / 1000.0
 }
 
 fn typst_paper(ui_value: Option<&str>) -> String {
@@ -295,6 +303,25 @@ pub struct TemplateImport {
 pub struct TemplateReport {
     pub missing_fonts: Vec<String>,
     pub declared_params: Vec<String>,
+}
+
+static FONT_FAMILIES: LazyLock<Vec<String>> = LazyLock::new(|| {
+    let mut store = FontStore::new();
+    store.extend(typst_kit::fonts::embedded());
+    store.extend(typst_kit::fonts::system());
+
+    let mut families: Vec<String> = store
+        .book()
+        .families()
+        .map(|(name, _)| name.to_string())
+        .collect();
+    families.sort_by_key(|name| name.to_lowercase());
+    families.dedup();
+    families
+});
+
+pub fn font_families() -> Vec<String> {
+    FONT_FAMILIES.clone()
 }
 
 pub fn validate_template(source: &str) -> Result<TemplateReport, String> {
@@ -621,6 +648,47 @@ mod tests {
         assert_eq!(
             report.missing_fonts,
             vec!["Definitely Not Installed Font".to_string()]
+        );
+    }
+
+    #[test]
+    fn line_spacing_is_a_line_height_multiplier() {
+        assert_eq!(leading_em(None), 0.65);
+        assert_eq!(leading_em(Some(1.0)), 0.65);
+        assert_eq!(leading_em(Some(2.0)), 1.3);
+        assert_eq!(leading_em(Some(0.0)), 0.325);
+        assert_eq!(leading_em(Some(99.0)), 2.6);
+    }
+
+    #[test]
+    fn system_fonts_are_discoverable() {
+        let mut store = FontStore::new();
+        store.extend(typst_kit::fonts::system());
+        let book = store.book();
+        let families: Vec<String> = book.families().map(|(name, _)| name.to_string()).collect();
+        assert!(
+            !families.is_empty(),
+            "no system fonts found; export would fall back to embedded faces only"
+        );
+        assert!(
+            families.iter().any(|f| f.to_lowercase().contains("dejavu")),
+            "expected a common system family among {} discovered families",
+            families.len()
+        );
+    }
+
+    #[test]
+    fn system_font_family_reaches_the_pdf() {
+        let settings = ExportSettings {
+            font_family: Some("DejaVu Serif".into()),
+            ..Default::default()
+        };
+        let pdf = markdown_to_pdf("System font check.", &settings, &[], None)
+            .expect("compile with system font");
+        let haystack = String::from_utf8_lossy(&pdf);
+        assert!(
+            haystack.contains("DejaVuSerif"),
+            "system font family was not embedded in the PDF"
         );
     }
 }

@@ -3,6 +3,7 @@ import {
   ArrowLeftIcon,
   FolderIcon,
   SwatchIcon,
+  FileExportIcon,
   KeyboardIcon,
   InfoIcon,
   IntegrationsIcon,
@@ -12,14 +13,21 @@ import { GeneralSettingsSection } from "./GeneralSettingsSection";
 import { AppearanceSettingsSection } from "./EditorSettingsSection";
 import { ShortcutsSettingsSection } from "./ShortcutsSettingsSection";
 import { AboutSettingsSection } from "./AboutSettingsSection";
+import { ExportSettingsSection } from "./ExportSettingsSection";
 import { ToolsSettingsSection } from "./ToolsSettingsSection";
-import { mod, isMac, isWindows } from "../../lib/platform";
+import { isWindows, mod, shortcut } from "../../lib/platform";
 
 interface SettingsPageProps {
   onBack: () => void;
 }
 
-type SettingsTab = "general" | "tools" | "editor" | "shortcuts" | "about";
+type SettingsTab =
+  | "general"
+  | "tools"
+  | "editor"
+  | "export"
+  | "shortcuts"
+  | "about";
 
 const tabs: {
   id: SettingsTab;
@@ -30,8 +38,9 @@ const tabs: {
   { id: "general", label: "Folder", icon: FolderIcon, shortcut: "1" },
   { id: "tools", label: "Integrations", icon: IntegrationsIcon, shortcut: "2" },
   { id: "editor", label: "Appearance", icon: SwatchIcon, shortcut: "3" },
-  { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon, shortcut: "4" },
-  { id: "about", label: "About", icon: InfoIcon, shortcut: "5" },
+  { id: "export", label: "Export", icon: FileExportIcon, shortcut: "4" },
+  { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon, shortcut: "5" },
+  { id: "about", label: "About", icon: InfoIcon, shortcut: "6" },
 ];
 
 export function SettingsPage({ onBack }: SettingsPageProps) {
@@ -49,21 +58,10 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey) {
-        if (e.key === "1") {
+        const tab = tabs.find((candidate) => candidate.shortcut === e.key);
+        if (tab) {
           e.preventDefault();
-          setActiveTab("general");
-        } else if (e.key === "2") {
-          e.preventDefault();
-          setActiveTab("tools");
-        } else if (e.key === "3") {
-          e.preventDefault();
-          setActiveTab("editor");
-        } else if (e.key === "4") {
-          e.preventDefault();
-          setActiveTab("shortcuts");
-        } else if (e.key === "5") {
-          e.preventDefault();
-          setActiveTab("about");
+          setActiveTab(tab.id);
         }
       }
     };
@@ -84,7 +82,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
           <div className="flex items-center gap-1">
             <IconButton
               onClick={onBack}
-              title={`Back (${mod}${isMac ? "" : "+"},)`}
+              title={`Back (${shortcut(mod, ",")})`}
             >
               <ArrowLeftIcon className="w-4.5 h-4.5 stroke-[1.5]" />
             </IconButton>
@@ -110,8 +108,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
                   {tab.label}
                 </div>
                 <div className="text-xs text-text-muted">
-                  <span className="mr-0.5">{mod}</span>
-                  {tab.shortcut}
+                  {shortcut(mod, tab.shortcut)}
                 </div>
               </Button>
             );
@@ -133,6 +130,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
             {activeTab === "general" && <GeneralSettingsSection />}
             {activeTab === "tools" && <ToolsSettingsSection />}
             {activeTab === "editor" && <AppearanceSettingsSection />}
+            {activeTab === "export" && <ExportSettingsSection />}
             {activeTab === "shortcuts" && <ShortcutsSettingsSection />}
             {activeTab === "about" && <AboutSettingsSection />}
           </div>

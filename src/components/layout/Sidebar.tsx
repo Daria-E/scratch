@@ -23,7 +23,7 @@ import {
   FolderPlusIcon,
   NoteIcon,
 } from "../icons";
-import { mod, shift, isMac, isWindows } from "../../lib/platform";
+import { isWindows, mod, shift, shortcut } from "../../lib/platform";
 import * as notesService from "../../services/notes";
 import { FolderNameDialog } from "../notes/FolderNameDialog";
 
@@ -323,7 +323,7 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
         <div className="flex items-center gap-px">
           <IconButton
             onClick={toggleSearch}
-            title={`Search Notes (${mod}${isMac ? "" : "+"}${shift}${isMac ? "" : "+"}F)`}
+            title={`Search Notes (${shortcut(mod, shift, "F")})`}
           >
             {searchOpen ? (
               <SearchOffIcon className="w-4.25 h-4.25 stroke-[1.5]" />
@@ -358,8 +358,7 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
                     <AddNoteIcon className="w-4 h-4 stroke-[1.6]" />
                     <span className="flex-1">New Note</span>
                     <kbd className="text-xs text-text-muted ml-2">
-                      {mod}
-                      {isMac ? "" : "+"}N
+                      {shortcut(mod, "N")}
                     </kbd>
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
@@ -376,7 +375,7 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
             <IconButton
               variant="ghost"
               onClick={() => createNote()}
-              title={`New Note (${mod}${isMac ? "" : "+"}N)`}
+              title={`New Note (${shortcut(mod, "N")})`}
             >
               <PlusIcon className="w-5.25 h-5.25 stroke-[1.4]" />
             </IconButton>

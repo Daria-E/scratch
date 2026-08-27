@@ -17,7 +17,6 @@ import type {
   EditorWidth,
   CustomColors,
   ThemeColorKey,
-  ExportSettings,
 } from "../types/note";
 
 type ThemeMode = "light" | "dark" | "system";
@@ -107,11 +106,6 @@ interface ThemeContextType {
   reloadSettings: () => Promise<void>;
   textDirection: TextDirection;
   setTextDirection: (dir: TextDirection) => void;
-  exportSettings: ExportSettings;
-  setExportSetting: <K extends keyof ExportSettings>(
-    key: K,
-    value: ExportSettings[K]
-  ) => void;
   editorWidth: EditorWidth;
   setEditorWidth: (width: EditorWidth) => void;
   interfaceZoom: number;
@@ -192,7 +186,6 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
     Required<EditorFontSettings>
   >(defaultEditorFontSettings);
   const [textDirection, setTextDirectionState] = useState<TextDirection>("auto");
-  const [exportSettings, setExportSettingsState] = useState<ExportSettings>({});
   const [editorWidth, setEditorWidthState] = useState<EditorWidth>("normal");
   const [interfaceZoom, setInterfaceZoomState] = useState(1.0);
   const [customEditorWidthPx, setCustomEditorWidthPxState] = useState<number>(
@@ -231,9 +224,6 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
       }
       if (isTextDirection(settings.textDirection)) {
         setTextDirectionState(settings.textDirection);
-      }
-      if (settings.exportSettings) {
-        setExportSettingsState(settings.exportSettings);
       }
       if (
         settings.editorWidth === "narrow" ||
@@ -429,24 +419,6 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
       console.error("Failed to reset editor settings:", error);
     }
   }, []);
-
-  const setExportSetting = useCallback(
-    <K extends keyof ExportSettings>(key: K, value: ExportSettings[K]) => {
-      setExportSettingsState((prev) => {
-        const updated = { ...prev, [key]: value };
-        void (async () => {
-          try {
-            const settings = await getSettings();
-            await updateSettings({ ...settings, exportSettings: updated });
-          } catch (error) {
-            console.error("Failed to save export settings:", error);
-          }
-        })();
-        return updated;
-      });
-    },
-    []
-  );
 
   // Save and set text direction
   const setTextDirection = useCallback(async (dir: TextDirection) => {
@@ -648,8 +620,6 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
         reloadSettings,
         textDirection,
         setTextDirection,
-        exportSettings,
-        setExportSetting,
         editorWidth,
         setEditorWidth,
         interfaceZoom,

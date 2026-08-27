@@ -38,7 +38,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 import { toast } from "sonner";
-import { mod, alt, shift, isMac, isWindows } from "../../lib/platform";
+import { alt, isMac, isWindows, mod, shift, shortcut } from "../../lib/platform";
 
 // Prepend https:// if no protocol is present
 function normalizeUrl(url: string): string {
@@ -306,21 +306,21 @@ function FormatBar({
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleBold().run()}
         isActive={editor.isActive("bold")}
-        title={`Bold (${mod}${isMac ? "" : "+"}B)`}
+        title={`Bold (${shortcut(mod, "B")})`}
       >
         <BoldIcon className="w-4.5 h-4.5 stroke-[1.5]" />
       </ToolbarButton>
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleItalic().run()}
         isActive={editor.isActive("italic")}
-        title={`Italic (${mod}${isMac ? "" : "+"}I)`}
+        title={`Italic (${shortcut(mod, "I")})`}
       >
         <ItalicIcon className="w-4.5 h-4.5 stroke-[1.5]" />
       </ToolbarButton>
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleStrike().run()}
         isActive={editor.isActive("strike")}
-        title={`Strikethrough (${mod}${isMac ? "" : "+"}${shift}${isMac ? "" : "+"}S)`}
+        title={`Strikethrough (${shortcut(mod, shift, "S")})`}
       >
         <StrikethroughIcon className="w-4.5 h-4.5 stroke-[1.5]" />
       </ToolbarButton>
@@ -330,28 +330,28 @@ function FormatBar({
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
         isActive={editor.isActive("heading", { level: 1 })}
-        title={`Heading 1 (${mod}${isMac ? "" : "+"}${alt}${isMac ? "" : "+"}1)`}
+        title={`Heading 1 (${shortcut(mod, alt, "1")})`}
       >
         <Heading1Icon className="w-4.5 h-4.5 stroke-[1.5]" />
       </ToolbarButton>
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
         isActive={editor.isActive("heading", { level: 2 })}
-        title={`Heading 2 (${mod}${isMac ? "" : "+"}${alt}${isMac ? "" : "+"}2)`}
+        title={`Heading 2 (${shortcut(mod, alt, "2")})`}
       >
         <Heading2Icon className="w-4.5 h-4.5 stroke-[1.5]" />
       </ToolbarButton>
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
         isActive={editor.isActive("heading", { level: 3 })}
-        title={`Heading 3 (${mod}${isMac ? "" : "+"}${alt}${isMac ? "" : "+"}3)`}
+        title={`Heading 3 (${shortcut(mod, alt, "3")})`}
       >
         <Heading3Icon className="w-4.5 h-4.5 stroke-[1.5]" />
       </ToolbarButton>
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleHeading({ level: 4 }).run()}
         isActive={editor.isActive("heading", { level: 4 })}
-        title={`Heading 4 (${mod}${isMac ? "" : "+"}${alt}${isMac ? "" : "+"}4)`}
+        title={`Heading 4 (${shortcut(mod, alt, "4")})`}
       >
         <Heading4Icon className="w-4.5 h-4.5 stroke-[1.5]" />
       </ToolbarButton>
@@ -361,14 +361,14 @@ function FormatBar({
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleBulletList().run()}
         isActive={editor.isActive("bulletList")}
-        title={`Bullet List (${mod}${isMac ? "" : "+"}${shift}${isMac ? "" : "+"}8)`}
+        title={`Bullet List (${shortcut(mod, shift, "8")})`}
       >
         <ListIcon className="w-4.5 h-4.5 stroke-[1.5]" />
       </ToolbarButton>
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleOrderedList().run()}
         isActive={editor.isActive("orderedList")}
-        title={`Numbered List (${mod}${isMac ? "" : "+"}${shift}${isMac ? "" : "+"}7)`}
+        title={`Numbered List (${shortcut(mod, shift, "7")})`}
       >
         <ListOrderedIcon className="w-4.5 h-4.5 stroke-[1.5]" />
       </ToolbarButton>
@@ -382,21 +382,21 @@ function FormatBar({
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleBlockquote().run()}
         isActive={editor.isActive("blockquote")}
-        title={`Blockquote (${mod}${isMac ? "" : "+"}${shift}${isMac ? "" : "+"}B)`}
+        title={`Blockquote (${shortcut(mod, shift, "B")})`}
       >
         <QuoteIcon className="w-4.5 h-4.5 stroke-[1.5]" />
       </ToolbarButton>
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleCode().run()}
         isActive={editor.isActive("code")}
-        title={`Inline Code (${mod}${isMac ? "" : "+"}E)`}
+        title={`Inline Code (${shortcut(mod, "E")})`}
       >
         <InlineCodeIcon className="w-4.5 h-4.5 stroke-[1.5]" />
       </ToolbarButton>
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleCodeBlock().run()}
         isActive={editor.isActive("codeBlock")}
-        title={`Code Block (${mod}${isMac ? "" : "+"}${alt}${isMac ? "" : "+"}C)`}
+        title={`Code Block (${shortcut(mod, alt, "C")})`}
       >
         <CodeIcon className="w-4.5 h-4.5 stroke-[1.5]" />
       </ToolbarButton>
@@ -420,7 +420,7 @@ function FormatBar({
       <ToolbarButton
         onClick={onAddLink}
         isActive={editor.isActive("link")}
-        title={`Add Link (${mod}${isMac ? "" : "+"}K)`}
+        title={`Add Link (${shortcut(mod, "K")})`}
       >
         <LinkIcon className="w-4.5 h-4.5 stroke-[1.5]" />
       </ToolbarButton>
@@ -587,7 +587,7 @@ export function Editor({
   const pinNote = notesCtx?.pinNote;
   const unpinNote = notesCtx?.unpinNote;
   const notes = notesCtx?.notes;
-  const { textDirection, exportSettings } = useTheme();
+  const { textDirection } = useTheme();
   const [isSaving, setIsSaving] = useState(false);
   // Force re-render when selection changes to update toolbar active states
   const [, setSelectionKey] = useState(0);
@@ -2124,7 +2124,6 @@ export function Editor({
       const saved = await exportTypesetPdf(
         markdown,
         currentNote.title,
-        exportSettings,
         currentNote.path
       );
       if (saved) {
@@ -2136,7 +2135,7 @@ export function Editor({
         typeof error === "string" ? error : "Failed to export PDF"
       );
     }
-  }, [editor, currentNote, getMarkdown, exportSettings]);
+  }, [editor, currentNote, getMarkdown]);
 
   const handleDownloadMarkdown = useCallback(async () => {
     if (!editor || !currentNote) return;
@@ -2421,8 +2420,7 @@ export function Editor({
               >
                 New Note{" "}
                 <span className="text-text-muted ml-1">
-                  {mod}
-                  {isMac ? "" : "+"}N
+                  {shortcut(mod, "N")}
                 </span>
               </Button>
             )}
@@ -2450,8 +2448,8 @@ export function Editor({
               onClick={onToggleSidebar}
               title={
                 isSidebarActive
-                  ? `Hide sidebar (${mod}${isMac ? "" : "+"}\\)`
-                  : `Show sidebar (${mod}${isMac ? "" : "+"}\\)`
+                  ? `Hide sidebar (${shortcut(mod, "\\")})`
+                  : `Show sidebar (${shortcut(mod, "\\")})`
               }
               className="shrink-0"
             >
@@ -2467,7 +2465,7 @@ export function Editor({
         >
           {hasExternalChanges ? (
             <Tooltip
-              content={`External changes detected (${mod}${isMac ? "" : "+"}R to refresh)`}
+              content={`External changes detected (${shortcut(mod, "R")} to refresh)`}
             >
               <button
                 onClick={reloadCurrentNote}
@@ -2526,7 +2524,7 @@ export function Editor({
             </Tooltip>
           )}
           {currentNote && (
-            <Tooltip content={`Find in note (${mod}${isMac ? "" : "+"}F)`}>
+            <Tooltip content={`Find in note (${shortcut(mod, "F")})`}>
               <IconButton onClick={openEditorSearch}>
                 <SearchIcon className="w-4.25 h-4.25 stroke-[1.6]" />
               </IconButton>
@@ -2536,8 +2534,8 @@ export function Editor({
             <Tooltip
               content={
                 sourceMode
-                  ? `View Formatted (${mod}${isMac ? "" : "+"}${shift}${isMac ? "" : "+"}M)`
-                  : `View Markdown Source (${mod}${isMac ? "" : "+"}${shift}${isMac ? "" : "+"}M)`
+                  ? `View Formatted (${shortcut(mod, shift, "M")})`
+                  : `View Markdown Source (${shortcut(mod, shift, "M")})`
               }
             >
               <IconButton onClick={toggleSourceMode}>
@@ -2551,7 +2549,7 @@ export function Editor({
           )}
           <DropdownMenu.Root open={copyMenuOpen} onOpenChange={setCopyMenuOpen}>
             <Tooltip
-              content={`Export (${mod}${isMac ? "" : "+"}${shift}${isMac ? "" : "+"}C)`}
+              content={`Export (${shortcut(mod, shift, "C")})`}
             >
               <DropdownMenu.Trigger asChild>
                 <IconButton>

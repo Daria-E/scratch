@@ -99,7 +99,7 @@ export function CommandPalette({
     unpinNote,
     notesFolder,
   } = useNotes();
-  const { setTheme, exportSettings } = useTheme();
+  const { setTheme } = useTheme();
   const { status, gitAvailable, gitEnabled, commit, sync, isSyncing } = useGit();
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -332,7 +332,6 @@ export function CommandPalette({
               const saved = await exportTypesetPdf(
                 markdown,
                 currentNote.title,
-                exportSettings,
                 currentNote.path
               );
               if (saved) {

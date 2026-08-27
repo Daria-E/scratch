@@ -6,7 +6,6 @@ import type {
   TextDirection,
   EditorWidth,
   ThemeColorKey,
-  PaperSize,
 } from "../../types/note";
 import { ChevronRightIcon, EyeIcon, MinusIcon, PlusIcon } from "../icons";
 import { cn } from "../../lib/utils";
@@ -24,13 +23,6 @@ const colorLabels: { key: ThemeColorKey; label: string; group: string }[] = [
   { key: "accent", label: "Primary & Buttons", group: "Text & UI" },
   { key: "border", label: "Borders", group: "Text & UI" },
   { key: "selection", label: "Selection Highlight", group: "Text & UI" },
-];
-
-// Paper size options
-const paperSizeOptions: { value: PaperSize; label: string }[] = [
-  { value: "a4", label: "A4" },
-  { value: "letter", label: "Letter" },
-  { value: "a5", label: "A5" },
 ];
 
 // Text direction options
@@ -72,8 +64,6 @@ export function AppearanceSettingsSection() {
     editorFontSettings,
     setEditorFontSetting,
     resetEditorFontSettings,
-    exportSettings,
-    setExportSetting,
     textDirection,
     setTextDirection,
     editorWidth,
@@ -100,17 +90,6 @@ export function AppearanceSettingsSection() {
     if (!Number.isFinite(parsed)) return;
     const clamped = Math.min(Math.max(parsed, min), max);
     setEditorFontSetting(field, clamped);
-  };
-
-  const handleExportNumericChange = (
-    field: "marginMm" | "fontSizePt" | "lineSpacing",
-    value: string,
-    min: number,
-    max: number,
-  ) => {
-    const parsed = parseFloat(value);
-    if (!Number.isFinite(parsed)) return;
-    setExportSetting(field, Math.min(Math.max(parsed, min), max));
   };
 
   // Check if settings differ from defaults
@@ -477,120 +456,6 @@ export function AppearanceSettingsSection() {
           </div>
           {/* Fade overlay - content to muted background */}
           <div className="absolute bottom-0 left-0 right-0 h-40 bg-linear-to-t from-bg to-transparent pointer-events-none" />
-        </div>
-      </section>
-      {/* Divider */}
-      <div className="border-t border-border border-dashed" />
-
-      {/* PDF Export Section */}
-      <section>
-        <div className="flex items-baseline justify-between mb-3">
-          <h2 className="text-xl font-medium">PDF export</h2>
-        </div>
-
-        <div className="rounded-[10px] border border-border pl-4 py-3 pr-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="text-sm text-text font-medium">Paper size</label>
-            <Select
-              value={exportSettings.paperSize ?? "a4"}
-              onChange={(e) =>
-                setExportSetting("paperSize", e.target.value as PaperSize)
-              }
-              className="w-40"
-            >
-              {paperSizeOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <label className="text-sm text-text font-medium">Margin (mm)</label>
-            <div className="relative w-40">
-              <Input
-                type="number"
-                min="5"
-                max="50"
-                value={exportSettings.marginMm ?? 20}
-                onChange={(e) =>
-                  handleExportNumericChange("marginMm", e.target.value, 5, 50)
-                }
-                className="w-full h-9 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <label className="text-sm text-text font-medium">
-              Font size (pt)
-            </label>
-            <div className="relative w-40">
-              <Input
-                type="number"
-                min="7"
-                max="24"
-                value={exportSettings.fontSizePt ?? 11}
-                onChange={(e) =>
-                  handleExportNumericChange("fontSizePt", e.target.value, 7, 24)
-                }
-                className="w-full h-9 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <label className="text-sm text-text font-medium">
-              Line spacing
-            </label>
-            <div className="relative w-40">
-              <Input
-                type="number"
-                min="0.4"
-                max="2"
-                step="0.05"
-                value={exportSettings.lineSpacing ?? 0.75}
-                onChange={(e) =>
-                  handleExportNumericChange("lineSpacing", e.target.value, 0.4, 2)
-                }
-                className="w-full h-9 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <label className="text-sm text-text font-medium">Direction</label>
-            <Select
-              value={exportSettings.direction ?? "auto"}
-              onChange={(e) =>
-                setExportSetting("direction", e.target.value as TextDirection)
-              }
-              className="w-40"
-            >
-              {textDirectionOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <label className="text-sm text-text font-medium">
-              Page numbers
-            </label>
-            <Select
-              value={exportSettings.pageNumbers === false ? "off" : "on"}
-              onChange={(e) =>
-                setExportSetting("pageNumbers", e.target.value === "on")
-              }
-              className="w-40"
-            >
-              <option value="on">On</option>
-              <option value="off">Off</option>
-            </Select>
-          </div>
         </div>
       </section>
     </div>

@@ -1,11 +1,7 @@
 import type { Editor } from "@tiptap/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import type {
-  ExportPreset,
-  ExportSettings,
-  TemplateImport,
-} from "../types/note";
+import type { ExportPreset, TemplateImport } from "../types/note";
 
 /**
  * Triggers the native print dialog for the editor content.
@@ -68,14 +64,12 @@ export async function downloadMarkdown(
  *
  * @param markdown - The markdown content to typeset
  * @param noteTitle - The note title for the default filename
- * @param settings - Page and typography settings, or undefined for defaults
  * @param notePath - Path of the source note, used to resolve relative image paths
  * @returns Promise<boolean> - Returns true if the PDF was written, false if user cancelled
  */
 export async function exportTypesetPdf(
   markdown: string,
   noteTitle: string,
-  settings?: ExportSettings,
   notePath?: string
 ): Promise<boolean> {
   const filePath = await save({
@@ -85,7 +79,7 @@ export async function exportTypesetPdf(
 
   if (!filePath) return false;
 
-  await invoke("export_pdf", { markdown, path: filePath, settings, notePath });
+  await invoke("export_pdf", { markdown, path: filePath, notePath });
 
   return true;
 }
@@ -99,6 +93,10 @@ export async function exportTypesetPdf(
  */
 function sanitizeFilename(name: string): string {
   return name.replace(/[/\\?%*:|"<>]/g, "-").trim() || "note";
+}
+
+export async function listExportFonts(): Promise<string[]> {
+  return invoke("list_export_fonts");
 }
 
 export async function listExportPresets(): Promise<ExportPreset[]> {

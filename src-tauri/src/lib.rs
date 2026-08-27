@@ -151,8 +151,6 @@ pub struct Settings {
     pub custom_colors_light: Option<std::collections::HashMap<String, String>>,
     #[serde(rename = "customColorsDark")]
     pub custom_colors_dark: Option<std::collections::HashMap<String, String>>,
-    #[serde(rename = "exportSettings")]
-    pub export_settings: Option<export::ExportSettings>,
 }
 
 // Search result
@@ -1894,6 +1892,13 @@ fn resolve_preset(
     }
     let active = state.app_config.read().unwrap().active_export_preset.clone()?;
     find_preset(state, &active)
+}
+
+#[tauri::command]
+async fn list_export_fonts() -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(export::font_families)
+        .await
+        .map_err(|e| format!("Font scan failed: {e}"))
 }
 
 #[tauri::command]
@@ -4087,6 +4092,7 @@ pub fn run() {
             write_file,
             export_pdf,
             list_export_presets,
+            list_export_fonts,
             get_active_export_preset,
             save_export_preset,
             delete_export_preset,

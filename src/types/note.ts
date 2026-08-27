@@ -97,7 +97,6 @@ export interface Settings {
   ignoredPatterns?: string[];
   customColorsLight?: CustomColors;
   customColorsDark?: CustomColors;
-  exportSettings?: ExportSettings;
 }
 
 export interface FolderNode {
