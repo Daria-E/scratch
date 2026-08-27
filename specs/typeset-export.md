@@ -80,7 +80,9 @@ exportSettings?: {
 
 - Export dropdown gains "Export PDF (typeset)…" above "Print as PDF"; command palette
   entry likewise. Opens save dialog; export runs async with toast on completion/error.
-- Settings UI: new "PDF export" section alongside existing editor-font settings.
+- Settings UI: own top-level "Export" tab. Not under Appearance — that tab governs the
+  on-screen editor, this governs a document artifact. (M2 shipped it under Appearance;
+  M5 moves it.)
 
 ## Milestones
 
@@ -90,6 +92,17 @@ exportSettings?: {
 - M3: preprocess pass (direction detection, wikilinks, image paths).
 - M4: coverage hardening — footnotes, task lists, nested quotes, huge notes; document
   unsupported constructs in README.
+- M5: presets and own settings tab. Two preset kinds:
+  - field-based — the basic values plus a curated Advanced group (~15 knobs: justify,
+    hyphenate, par spacing and first-line indent, heading numbering, page-number format,
+    header/footer text, columns, footnote size, equation numbering), each mapping to a
+    `#set` parameter;
+  - template-backed — a `.typ` file stored under `{APP_DATA}/export-templates/` and used
+    as the compile template, exposing the named parameters the template itself declares.
+  Both kinds also accept a raw Typst preamble string, injected before the body, for
+  `#set`/`#show` rules outside the curated set.
+  Import validates by compiling a throwaway note with the template and rejects with the
+  Typst error; warns when the template names font families the system lacks.
 
 ## Known limits / risks
 
@@ -110,8 +123,28 @@ exportSettings?: {
 - O2: accept the binary size. Rejected: dropping embedded fonts (saves 9.7 MB, costs
   math-font determinism), sidecar typst binary (same download, adds per-platform binary
   management and a failure mode observed in the wild — Tideflow's sidecar segfaults).
+- O3 resolved: per-document selection is in scope (M5). A note names its preset in
+  frontmatter (`exportPreset: <name>`), which keeps the choice inside the `.md` file and
+  therefore works with or without a notes folder.
+- Presets and templates live in app config (`{APP_DATA}`), not `.scratch/`. Rationale:
+  folder-independent operation is a planned direction (Scratch usable as a plain markdown
+  editor with no notes folder), and `.scratch/`-only storage would make presets vanish in
+  that mode. Sharing presets through the notes folder may come later as an override.
+- Layout values live only in presets, with a built-in "Default"; the Export tab manages
+  presets and selects the active one. Rejected: editable fields in both the settings tab
+  and the preset dialogue — two sources of truth for the same value.
+- Advanced exposes a curated knob set, not every Typst parameter. Typst is not a
+  field-based config format: `#set` applies to every element type and `#show` rules are
+  arbitrary code, so "all supported fields" is unbounded and would reproduce Typst's docs
+  as a form. The raw preamble field covers the long tail.
+- Template import does not flatten a template into fields. A `.typ` template is code
+  (`#show` rules, title pages, theorem environments) with no field representation;
+  flattening would silently drop exactly what makes the template valuable. Imported
+  templates are used as templates, and only their declared parameters are surfaced.
 
 ## Open questions
 
-- O3: per-note frontmatter overrides for export settings (LyX-style per-document
-  layout) — v2 candidate.
+- O4: LaTeX/LyX preamble parameter extraction (documented subset: `\documentclass`
+  options, `geometry` margins, line spacing) — only if concrete preambles justify it.
+  Full LaTeX class fidelity is out of reach with Typst and would reopen the engine
+  decision (Tectonic).
