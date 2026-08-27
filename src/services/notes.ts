@@ -97,3 +97,21 @@ export async function searchNotes(query: string): Promise<SearchResult[]> {
 export async function startFileWatcher(): Promise<void> {
   return invoke("start_file_watcher");
 }
+
+export type DefaultWindow = "editor" | "notes";
+
+export async function getDefaultWindow(): Promise<DefaultWindow> {
+  return invoke("get_default_window");
+}
+
+export async function setDefaultWindow(value: DefaultWindow): Promise<void> {
+  return invoke("set_default_window", { value });
+}
+
+export async function createDraft(): Promise<string> {
+  return invoke("create_draft");
+}
+
+export async function isDraftPath(path: string): Promise<boolean> {
+  return invoke("is_draft_path", { path });
+}

@@ -108,6 +108,17 @@ pub struct AppConfig {
     pub active_export_preset: Option<String>,
     #[serde(default)]
     pub ui: GlobalSettings,
+    #[serde(default, rename = "defaultWindow")]
+    pub default_window: DefaultWindow,
+}
+
+// Which kind of window opens when the app starts with no file argument.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DefaultWindow {
+    #[default]
+    Editor,
+    Notes,
 }
 
 // Settings that apply to the app itself, so they work with no notes folder set.
@@ -2012,6 +2023,73 @@ async fn list_export_fonts() -> Result<Vec<String>, String> {
     tokio::task::spawn_blocking(export::font_families)
         .await
         .map_err(|e| format!("Font scan failed: {e}"))
+}
+
+fn drafts_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("No app data dir: {e}"))?
+        .join("drafts");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create drafts dir: {e}"))?;
+    Ok(dir)
+}
+
+fn draft_file_name() -> String {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    format!("draft-{stamp}.md")
+}
+
+#[tauri::command]
+fn get_default_window(state: State<AppState>) -> DefaultWindow {
+    state.app_config.read().expect("app_config read lock").default_window
+}
+
+#[tauri::command]
+fn set_default_window(
+    app: AppHandle,
+    value: DefaultWindow,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let mut app_config = state.app_config.write().expect("app_config write lock");
+    app_config.default_window = value;
+    save_app_config(&app, &app_config).map_err(|e| format!("Failed to save setting: {e}"))
+}
+
+// Reuses an existing blank draft rather than leaving one behind on every launch.
+#[tauri::command]
+async fn create_draft(app: AppHandle) -> Result<String, String> {
+    let dir = drafts_dir(&app)?;
+
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_blank = path.extension().is_some_and(|ext| ext == "md")
+                && std::fs::read_to_string(&path)
+                    .map(|content| content.trim().is_empty())
+                    .unwrap_or(false);
+            if is_blank {
+                return Ok(path.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    let path = dir.join(draft_file_name());
+    fs::write(&path, "")
+        .await
+        .map_err(|e| format!("Failed to create draft: {e}"))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn is_draft_path(app: AppHandle, path: String) -> bool {
+    match drafts_dir(&app) {
+        Ok(dir) => Path::new(&path).starts_with(dir),
+        Err(_) => false,
+    }
 }
 
 #[tauri::command]
@@ -4213,6 +4291,10 @@ pub fn run() {
             write_file,
             export_pdf,
             list_export_presets,
+            get_default_window,
+            set_default_window,
+            create_draft,
+            is_draft_path,
             list_export_fonts,
             get_active_export_preset,
             save_export_preset,

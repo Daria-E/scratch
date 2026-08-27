@@ -1,4 +1,11 @@
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { useTheme, defaultThemeColors } from "../../context/ThemeContext";
+import {
+  getDefaultWindow,
+  setDefaultWindow,
+  type DefaultWindow,
+} from "../../services/notes";
 import { Button, CodeCopyButton, IconButton, Input, Select } from "../ui";
 import { ColorPicker } from "../ui/ColorPicker";
 import type {
@@ -57,6 +64,25 @@ const boldWeightOptions = [
 ];
 
 export function AppearanceSettingsSection() {
+  const [defaultWindow, setDefaultWindowState] =
+    useState<DefaultWindow>("editor");
+
+  useEffect(() => {
+    getDefaultWindow()
+      .then(setDefaultWindowState)
+      .catch((error) => console.error("Failed to read startup setting:", error));
+  }, []);
+
+  const changeDefaultWindow = async (value: DefaultWindow) => {
+    setDefaultWindowState(value);
+    try {
+      await setDefaultWindow(value);
+    } catch (error) {
+      console.error("Failed to save startup setting:", error);
+      toast.error("Failed to save startup setting");
+    }
+  };
+
   const {
     theme,
     resolvedTheme,
@@ -119,6 +145,27 @@ export function AppearanceSettingsSection() {
 
   return (
     <div className="space-y-8 py-8">
+      {/* Startup Section */}
+      <section className="pb-2">
+        <h2 className="text-xl font-medium mb-3">On launch</h2>
+        <div className="rounded-[10px] border border-border pl-4 py-3 pr-3 flex items-center justify-between">
+          <label className="text-sm text-text font-medium">
+            Open
+            <span className="block text-xs text-text-muted font-normal">
+              Which window appears when Scratch starts
+            </span>
+          </label>
+          <Select
+            value={defaultWindow}
+            onChange={(e) => void changeDefaultWindow(e.target.value as DefaultWindow)}
+            className="w-40"
+          >
+            <option value="editor">A blank document</option>
+            <option value="notes">My notes</option>
+          </Select>
+        </div>
+      </section>
+
       {/* Theme Section */}
       <section className="pb-2">
         <h2 className="text-xl font-medium mb-3">Theme</h2>

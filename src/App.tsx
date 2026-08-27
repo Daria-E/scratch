@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { NotesProvider, useNotes } from "./context/NotesContext";
 import { ThemeProvider, useTheme } from "./context/ThemeContext";
 import { listen } from "@tauri-apps/api/event";
+import { createDraft, getDefaultWindow } from "./services/notes";
 import { GitProvider } from "./context/GitContext";
 import { TooltipProvider, Toaster } from "./components/ui";
 import { Sidebar } from "./components/layout/Sidebar";
@@ -637,6 +638,30 @@ function UpdateToast({
 
 function App() {
   const { isPreview, previewFile } = useMemo(getWindowMode, []);
+  // With no file in the URL, the default-window setting decides whether this window is
+  // an editor window (opened on a fresh draft) or the notes library.
+  const [editorFile, setEditorFile] = useState<string | null>(null);
+  const [resolvingWindowKind, setResolvingWindowKind] = useState(!isPreview);
+
+  useEffect(() => {
+    if (isPreview) return;
+    let cancelled = false;
+
+    getDefaultWindow()
+      .then(async (kind) => {
+        if (cancelled || kind !== "editor") return;
+        const draft = await createDraft();
+        if (!cancelled) setEditorFile(draft);
+      })
+      .catch((error) => console.error("Failed to resolve window kind:", error))
+      .finally(() => {
+        if (!cancelled) setResolvingWindowKind(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isPreview]);
 
   // Cmd/Ctrl+W — close window (works in both preview and folder mode)
   useEffect(() => {
@@ -663,16 +688,23 @@ function App() {
     return () => clearTimeout(timer);
   }, [isPreview]);
 
-  // Preview mode: lightweight editor without sidebar, search, git
-  if (isPreview && previewFile) {
+  // Editor window: one file (or a fresh draft), no sidebar, search or git
+  const editorWindowFile =
+    isPreview && previewFile ? decodeURIComponent(previewFile) : editorFile;
+
+  if (editorWindowFile) {
     return (
       <ThemeProvider>
         <Toaster />
         <TooltipProvider>
-          <PreviewApp filePath={decodeURIComponent(previewFile)} />
+          <PreviewApp filePath={editorWindowFile} />
         </TooltipProvider>
       </ThemeProvider>
     );
+  }
+
+  if (resolvingWindowKind) {
+    return <div className="h-full bg-bg" />;
   }
 
   // Folder mode: full app with sidebar, search, git, etc.
