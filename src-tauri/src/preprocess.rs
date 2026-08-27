@@ -34,7 +34,7 @@ pub fn prepare(markdown: &str, default_dir: &str, search_dirs: &[PathBuf]) -> Pr
     let body = FRONTMATTER.replace(markdown, "");
     let without_wikilinks = WIKILINK.replace_all(&body, "$1");
     let with_checkboxes = TASK_ITEM.replace_all(&without_wikilinks, |caps: &regex::Captures| {
-        let checked = caps[2].to_ascii_lowercase() == "x";
+        let checked = caps[2].eq_ignore_ascii_case("x");
         format!("{}{} ", &caps[1], if checked { "\u{2611}" } else { "\u{2610}" })
     });
     let (rewritten, images) = embed_images(&with_checkboxes, search_dirs);
