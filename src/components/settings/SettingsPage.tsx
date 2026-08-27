@@ -16,7 +16,7 @@ import { AboutSettingsSection } from "./AboutSettingsSection";
 import { ExportSettingsSection } from "./ExportSettingsSection";
 import { getNotesFolder } from "../../services/notes";
 import { ToolsSettingsSection } from "./ToolsSettingsSection";
-import { isWindows, mod, shortcut } from "../../lib/platform";
+import { keyIs, isWindows, mod, shortcut } from "../../lib/platform";
 
 interface SettingsPageProps {
   onBack: () => void;
@@ -93,7 +93,7 @@ export function SettingsPage({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey) {
-        const tab = tabs.find((candidate) => candidate.shortcut === e.key);
+        const tab = tabs.find((candidate) => keyIs(e, candidate.shortcut));
         if (tab) {
           e.preventDefault();
           setActiveTab(tab.id);

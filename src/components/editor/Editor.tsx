@@ -38,7 +38,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 import { toast } from "sonner";
-import { alt, isMac, isWindows, mod, shift, shortcut } from "../../lib/platform";
+import { keyIs, alt, isMac, isWindows, mod, shift, shortcut } from "../../lib/platform";
 
 // Prepend https:// if no protocol is present
 function normalizeUrl(url: string): string {
@@ -1986,7 +1986,7 @@ export function Editor({
   // Keyboard shortcut for Cmd+K to add link (only when editor is focused)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      if ((e.metaKey || e.ctrlKey) && keyIs(e, "k")) {
         // Only handle if we're in the editor
         const target = e.target as HTMLElement;
         const isInEditor = target.closest(".ProseMirror");
@@ -2003,7 +2003,7 @@ export function Editor({
   // Keyboard shortcut for Cmd+Shift+C to open copy menu
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "c") {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && keyIs(e, "c")) {
         e.preventDefault();
         setCopyMenuOpen(true);
       }
@@ -2028,13 +2028,13 @@ export function Editor({
         (e.metaKey || e.ctrlKey) &&
         !e.shiftKey &&
         !e.altKey &&
-        e.key.toLowerCase() === "f";
+        keyIs(e, "f");
       // Cmd+H is reserved by macOS (Hide), so replace uses the platform
       // convention: ⌥⌘F on macOS, Ctrl+H elsewhere. e.code is checked on
       // macOS because ⌥ changes e.key to a special character ("ƒ").
       const openReplace = isMac
         ? e.metaKey && e.altKey && !e.shiftKey && e.code === "KeyF"
-        : e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "h";
+        : e.ctrlKey && !e.shiftKey && !e.altKey && keyIs(e, "h");
       if (openFind || openReplace) {
         if (!currentNote || !editor) return;
 

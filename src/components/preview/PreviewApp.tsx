@@ -1,3 +1,4 @@
+import { keyIs } from "../../lib/platform";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -181,28 +182,28 @@ export function PreviewApp({
       }
 
       // Cmd+Shift+M: Toggle markdown source mode
-      if (modKey && e.shiftKey && e.key.toLowerCase() === "m") {
+      if (modKey && e.shiftKey && keyIs(e, "m")) {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("toggle-source-mode"));
         return;
       }
 
       // Cmd+Shift+P: Print
-      if (modKey && e.shiftKey && e.key.toLowerCase() === "p") {
+      if (modKey && e.shiftKey && keyIs(e, "p")) {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("print-note"));
         return;
       }
 
       // Cmd+P: Command palette (also blocks the browser print dialog)
-      if (modKey && !e.shiftKey && e.key === "p") {
+      if (modKey && !e.shiftKey && keyIs(e, "p")) {
         e.preventDefault();
         setPaletteOpen((prev) => !prev);
         return;
       }
 
       // Cmd+N: New document in its own window
-      if (modKey && !e.shiftKey && e.key.toLowerCase() === "n") {
+      if (modKey && !e.shiftKey && keyIs(e, "n")) {
         e.preventDefault();
         filesService.newEditorWindow().catch((error) => {
           console.error("Failed to open new document:", error);
@@ -212,7 +213,7 @@ export function PreviewApp({
       }
 
       // Cmd+O: Open an existing markdown file
-      if (modKey && !e.shiftKey && e.key.toLowerCase() === "o") {
+      if (modKey && !e.shiftKey && keyIs(e, "o")) {
         e.preventDefault();
         pickMarkdownFile()
           .then((picked) => {
@@ -226,14 +227,14 @@ export function PreviewApp({
       }
 
       // Cmd+,: Settings
-      if (modKey && e.key === ",") {
+      if (modKey && keyIs(e, ",")) {
         e.preventDefault();
         setShowSettings((prev) => !prev);
         return;
       }
 
       // Cmd+S: drafts need a destination; saved files autosave already
-      if (modKey && !e.shiftKey && e.key.toLowerCase() === "s") {
+      if (modKey && !e.shiftKey && keyIs(e, "s")) {
         e.preventDefault();
         if (isDraft) {
           saveAs().catch((error) => {
@@ -247,7 +248,7 @@ export function PreviewApp({
       }
 
       // Cmd+R: Reload file from disk
-      if (modKey && e.key === "r") {
+      if (modKey && keyIs(e, "r")) {
         e.preventDefault();
         reload();
         return;

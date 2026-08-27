@@ -186,9 +186,10 @@ mounts an error boundary.
 
 ## Known limits / risks
 
-- Keyboard shortcuts match `e.key`, which is layout-dependent: on a non-Latin layout
-  (e.g. Hebrew) letter shortcuts do not fire. Deferred; the fix is `e.code`-based
-  matching applied across all handlers at once.
+- Shortcuts are layout-aware via `keyIs` (`lib/platform.ts`): `e.key` is matched first
+  so Latin layouts keep their own letters, with an `e.code` physical-position fallback
+  when the layout produced a non-ASCII character (fixed 2026-08-27; formerly shortcuts
+  did not fire on non-Latin layouts). New handlers must use `keyIs`, not raw `e.key`.
 
 - Editing an arbitrary file inherits Scratch's autosave: changes are written ~300 ms after
   typing, with no explicit save step. This already applies to preview windows today.

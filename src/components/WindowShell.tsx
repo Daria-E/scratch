@@ -1,3 +1,4 @@
+import { keyIs } from "../lib/platform";
 import {
   createContext,
   useCallback,
@@ -39,7 +40,7 @@ function WindowChrome({ children }: { children: ReactNode }) {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!e.metaKey && !e.ctrlKey) return;
 
-      if (e.key === "=" || e.key === "+") {
+      if (keyIs(e, "=") || keyIs(e, "+")) {
         e.preventDefault();
         setInterfaceZoom((prev) => prev + 0.05);
         const newZoom =
@@ -51,7 +52,7 @@ function WindowChrome({ children }: { children: ReactNode }) {
         return;
       }
 
-      if (e.key === "-" || e.key === "_") {
+      if (keyIs(e, "-") || keyIs(e, "_")) {
         e.preventDefault();
         setInterfaceZoom((prev) => prev - 0.05);
         const newZoom =
@@ -63,14 +64,14 @@ function WindowChrome({ children }: { children: ReactNode }) {
         return;
       }
 
-      if (e.key === "0") {
+      if (keyIs(e, "0")) {
         e.preventDefault();
         setInterfaceZoom(1.0);
         toast("Zoom 100%", { id: "zoom", duration: 1500 });
         return;
       }
 
-      if (e.key === "/") {
+      if (keyIs(e, "/")) {
         e.preventDefault();
         setShortcutsOpen(true);
       }

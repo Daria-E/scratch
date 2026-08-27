@@ -32,7 +32,7 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as aiService from "./services/ai";
 import type { AiProvider } from "./services/ai";
-import { isMac, isWindows } from "./lib/platform";
+import { isMac, isWindows, keyIs } from "./lib/platform";
 
 // Detect preview mode from URL search params
 function getWindowMode(): {
@@ -210,7 +210,7 @@ function AppContent({ onLeaveNotes }: AppContentProps) {
         isInEditor && currentNoteRef.current?.content.trim() === "";
 
       // Cmd+, - Toggle settings (always works, even in settings)
-      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+      if ((e.metaKey || e.ctrlKey) && keyIs(e, ",")) {
         e.preventDefault();
         toggleSettings();
         return;
@@ -232,7 +232,7 @@ function AppContent({ onLeaveNotes }: AppContentProps) {
       if (
         (e.metaKey || e.ctrlKey) &&
         e.shiftKey &&
-        e.key.toLowerCase() === "m"
+        keyIs(e, "m")
       ) {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("toggle-source-mode"));
@@ -259,14 +259,14 @@ function AppContent({ onLeaveNotes }: AppContentProps) {
       }
 
       // Cmd+P - Open command palette
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "p") {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && keyIs(e, "p")) {
         e.preventDefault();
         setPaletteOpen(true);
         return;
       }
 
       // Cmd+Shift+P - Print
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "p") {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && keyIs(e, "p")) {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("print-note"));
         return;
@@ -276,7 +276,7 @@ function AppContent({ onLeaveNotes }: AppContentProps) {
       if (
         (e.metaKey || e.ctrlKey) &&
         e.shiftKey &&
-        e.key.toLowerCase() === "f"
+        keyIs(e, "f")
       ) {
         e.preventDefault();
         setSidebarVisible(true);
@@ -285,14 +285,14 @@ function AppContent({ onLeaveNotes }: AppContentProps) {
       }
 
       // Cmd+\ - Toggle sidebar
-      if ((e.metaKey || e.ctrlKey) && e.key === "\\") {
+      if ((e.metaKey || e.ctrlKey) && keyIs(e, "\\")) {
         e.preventDefault();
         toggleSidebar();
         return;
       }
 
       // Cmd+N - New note
-      if ((e.metaKey || e.ctrlKey) && e.key === "n") {
+      if ((e.metaKey || e.ctrlKey) && keyIs(e, "n")) {
         e.preventDefault();
         createNote();
         return;
@@ -316,7 +316,7 @@ function AppContent({ onLeaveNotes }: AppContentProps) {
       // Cmd+D - Duplicate current note
       if (
         (e.metaKey || e.ctrlKey) &&
-        e.key.toLowerCase() === "d" &&
+        keyIs(e, "d") &&
         !isInEditor &&
         !isInInput &&
         selectedNoteId
@@ -327,7 +327,7 @@ function AppContent({ onLeaveNotes }: AppContentProps) {
       }
 
       // Cmd+R - Reload current note (pull external changes)
-      if ((e.metaKey || e.ctrlKey) && e.key === "r") {
+      if ((e.metaKey || e.ctrlKey) && keyIs(e, "r")) {
         e.preventDefault();
         reloadCurrentNote();
         return;
@@ -637,7 +637,7 @@ function App() {
   // Cmd/Ctrl+W — close window (works in both preview and folder mode)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "w") {
+      if ((e.metaKey || e.ctrlKey) && keyIs(e, "w")) {
         e.preventDefault();
         getCurrentWindow().close().catch(console.error);
       }
