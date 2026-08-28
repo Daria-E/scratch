@@ -66,6 +66,7 @@ import {
   fileStem,
   markdownFromEditor,
   parentDirectory,
+  pasteSmellsLikeFiles,
 } from "../../lib/editorMarkdown";
 import { Frontmatter } from "./Frontmatter";
 import { BlockMathEditor } from "./BlockMathEditor";
@@ -1418,6 +1419,47 @@ export function Editor({
             reader.readAsDataURL(blob);
             return true; // Handled
           }
+        }
+
+        // A copied file reaches the DOM in webview-specific shapes (path text
+        // on WebKitGTK); the backend reads the OS clipboard authoritatively.
+        const pastedText = clipboardData.getData("text/plain");
+        if (pasteSmellsLikeFiles(clipboardData.types, pastedText)) {
+          (async () => {
+            let images: string[] = [];
+            try {
+              images = await invoke<string[]>("clipboard_image_files");
+            } catch (error) {
+              console.error("Failed to read clipboard files:", error);
+            }
+            if (images.length === 0) {
+              if (pastedText) {
+                editorRef.current
+                  ?.chain()
+                  .focus()
+                  .insertContent({ type: "text", text: pastedText })
+                  .run();
+              }
+              return;
+            }
+            for (const sourcePath of images) {
+              try {
+                const assetUrl = await importImageAsset(
+                  "copy_image_to_assets",
+                  { sourcePath },
+                );
+                editorRef.current
+                  ?.chain()
+                  .focus()
+                  .setImage({ src: assetUrl })
+                  .run();
+              } catch (error) {
+                console.error("Failed to paste image file:", error);
+                toast.error(`Failed to paste image: ${error}`);
+              }
+            }
+          })();
+          return true; // Handled
         }
 
         // Handle markdown text paste

@@ -2141,7 +2141,7 @@ fn list_unsaved_drafts(app: AppHandle) -> Vec<DraftEntry> {
             ))
         })
         .collect();
-    drafts.sort_by(|a, b| b.0.cmp(&a.0));
+    drafts.sort_by_key(|draft| std::cmp::Reverse(draft.0));
     drafts.into_iter().map(|(_, entry)| entry).collect()
 }
 
@@ -2997,6 +2997,103 @@ fn copy_to_clipboard(app: AppHandle, text: String) -> Result<(), String> {
     app.clipboard().write_text(text).map_err(|e| e.to_string())
 }
 
+// Classify by content, not extension or OS registry: bytes are the only
+// cross-platform truth. SVG is XML text, invisible to magic bytes.
+fn sniff_image(head: &[u8]) -> Option<&'static str> {
+    if let Some(kind) = infer::get(head) {
+        if kind.matcher_type() == infer::MatcherType::Image {
+            return Some(kind.extension());
+        }
+    }
+    let text = String::from_utf8_lossy(head);
+    let trimmed = text.trim_start();
+    if trimmed.starts_with("<svg") || (trimmed.starts_with("<?xml") && text.contains("<svg")) {
+        return Some("svg");
+    }
+    None
+}
+
+fn image_file_extension(path: &Path) -> Option<&'static str> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut buf = [0u8; 4096];
+    let read = file.read(&mut buf).ok()?;
+    if read == 0 {
+        return None;
+    }
+    sniff_image(&buf[..read])
+}
+
+fn local_path_from_file_uri(uri: &str) -> Option<PathBuf> {
+    let rest = uri.trim().strip_prefix("file://")?;
+    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+    let decoded = urlencoding::decode(rest).ok()?;
+    let mut path = decoded.into_owned();
+    if path.len() > 3 && path.as_bytes()[0] == b'/' && path.as_bytes()[2] == b':' {
+        path.remove(0);
+    }
+    Some(PathBuf::from(path))
+}
+
+#[cfg(target_os = "linux")]
+fn clipboard_file_candidates(app: &AppHandle) -> Vec<PathBuf> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let posted = app.run_on_main_thread(move || {
+        let uris = gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD)
+            .wait_for_uris()
+            .into_iter()
+            .map(|uri| uri.to_string())
+            .collect::<Vec<_>>();
+        let _ = tx.send(uris);
+    });
+    if posted.is_err() {
+        return Vec::new();
+    }
+    rx.recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|uri| local_path_from_file_uri(uri))
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn clipboard_file_candidates(_app: &AppHandle) -> Vec<PathBuf> {
+    clipboard_win::get_clipboard::<Vec<String>, _>(clipboard_win::formats::FileList)
+        .unwrap_or_default()
+        .into_iter()
+        .map(PathBuf::from)
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn clipboard_file_candidates(_app: &AppHandle) -> Vec<PathBuf> {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeFileURL};
+    unsafe {
+        let pasteboard = NSPasteboard::generalPasteboard();
+        let Some(items) = pasteboard.pasteboardItems() else {
+            return Vec::new();
+        };
+        items
+            .iter()
+            .filter_map(|item| item.stringForType(NSPasteboardTypeFileURL))
+            .filter_map(|uri| local_path_from_file_uri(&uri.to_string()))
+            .collect()
+    }
+}
+
+#[tauri::command]
+async fn clipboard_image_files(app: AppHandle) -> Vec<String> {
+    tokio::task::spawn_blocking(move || {
+        clipboard_file_candidates(&app)
+            .into_iter()
+            .filter(|path| path.is_file() && image_file_extension(path).is_some())
+            .map(|path| path.to_string_lossy().to_string())
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 async fn allocate_asset_path(
     folder: &str,
     doc_stem: Option<&str>,
@@ -3104,19 +3201,12 @@ async fn copy_image_to_assets(
         return Err("Source image file does not exist".to_string());
     }
 
-    // Get file extension
+    let sniffed = image_file_extension(&source)
+        .ok_or("Only image files can be copied to assets".to_string())?;
     let extension = source
         .extension()
         .and_then(|e| e.to_str())
-        .ok_or("Invalid file extension")?;
-
-    const ALLOWED_IMAGE_EXTENSIONS: &[&str] = &[
-        "jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "tiff", "tif", "ico", "avif",
-    ];
-    let ext_lower = extension.to_lowercase();
-    if !ALLOWED_IMAGE_EXTENSIONS.contains(&ext_lower.as_str()) {
-        return Err("Only image files can be copied to assets".to_string());
-    }
+        .unwrap_or(sniffed);
 
     // Get original filename (without extension)
     let original_name = source
@@ -4611,6 +4701,7 @@ pub fn run() {
             new_editor_window,
             save_draft_as,
             discard_draft,
+            clipboard_image_files,
             is_draft_path,
             list_export_fonts,
             get_active_export_preset,
@@ -4775,6 +4866,54 @@ mod tests {
         );
         assert_eq!(frontmatter_preset("---\ntitle: X\n---\n\nBody"), None);
         assert_eq!(frontmatter_preset("# No frontmatter\n\nexportPreset: X"), None);
+    }
+}
+
+#[cfg(test)]
+mod image_sniff_tests {
+    use super::{image_file_extension, local_path_from_file_uri, sniff_image};
+    use std::path::PathBuf;
+
+    const PNG_HEAD: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+
+    #[test]
+    fn classifies_by_content_not_extension() {
+        assert_eq!(sniff_image(PNG_HEAD), Some("png"));
+        assert_eq!(sniff_image(b"\xff\xd8\xff\xe0\x00\x10JFIF"), Some("jpg"));
+        assert_eq!(sniff_image(b"<svg xmlns=\"http://www.w3.org/2000/svg\">"), Some("svg"));
+        assert_eq!(
+            sniff_image(b"<?xml version=\"1.0\"?>\n<svg xmlns=\"x\">"),
+            Some("svg")
+        );
+        assert_eq!(sniff_image(b"just some plain text"), None);
+        assert_eq!(sniff_image(b"%PDF-1.7 not an image"), None);
+
+        let dir = std::env::temp_dir().join("scratch-sniff-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let lying = dir.join("actually-a-png.txt");
+        std::fs::write(&lying, PNG_HEAD).expect("write");
+        assert_eq!(image_file_extension(&lying), Some("png"));
+        let empty = dir.join("empty.png");
+        std::fs::write(&empty, b"").expect("write");
+        assert_eq!(image_file_extension(&empty), None);
+    }
+
+    #[test]
+    fn file_uris_decode_to_local_paths() {
+        assert_eq!(
+            local_path_from_file_uri("file:///home/d/Bliss%20Day.png"),
+            Some(PathBuf::from("/home/d/Bliss Day.png"))
+        );
+        assert_eq!(
+            local_path_from_file_uri("file://localhost/home/d/a.png"),
+            Some(PathBuf::from("/home/d/a.png"))
+        );
+        assert_eq!(
+            local_path_from_file_uri("file:///C:/Users/d/a.png"),
+            Some(PathBuf::from("C:/Users/d/a.png"))
+        );
+        assert_eq!(local_path_from_file_uri("https://x/y.png"), None);
     }
 }
 

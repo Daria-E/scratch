@@ -39,6 +39,14 @@ typst-kit = { version = "0.15", features = ["embedded-fonts", "scan-fonts"] }
 include_dir = "0.7.4"
 typst-layout = "0.15"
 pulldown-cmark = { version = "0.13.4", default-features = false }
+infer = "0.19"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+clipboard-win = "5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-foundation = { version = "0.3", features = ["NSUserDefaults", "NSString"] }
+objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSPasteboardItem"] }

@@ -109,6 +109,22 @@ Pre-existing flat `assets/name.png` links keep resolving; documents are never re
 in place. Notes with the same stem in different subfolders share an asset subfolder —
 harmless (collisions inside get `-1` suffixes) and no GC runs in the notes folder.
 
+Pasting a copied image *file* (as opposed to bitmap data) reaches the DOM in
+webview-specific shapes — WebKitGTK hands the page only the path as text — so the DOM
+is not where file pastes are detected. The backend command `clipboard_image_files`
+reads the OS clipboard directly (GTK clipboard on Linux, `clipboard-win` on Windows,
+NSPasteboard on macOS) and returns the local image files it holds. The paste handler's
+shared flow on all platforms: bitmap items → save as screenshot; paste that smells like
+files (`pasteSmellsLikeFiles`: a Files/uri-list type, or all-path text) → ask the
+backend and import each returned file via `copy_image_to_assets`, falling back to plain
+text insertion when the backend finds none; otherwise the normal text/markdown path.
+
+Image classification is by file content (`sniff_image`: magic bytes via `infer`, plus
+an XML sniff for SVG), not by extension — `copy_image_to_assets` uses the same
+classifier, so a misnamed image imports and a non-image with an image extension is
+rejected. Extension lists survive only in the Insert → Image dialog filter, which is a
+UI convention.
+
 The asset protocol excludes hidden path segments (`requireLiteralLeadingDot`), and both
 drafts and arbitrary opened files can live under them, so `read_file_direct` grants the
 loaded document's directory to the asset scope at load time — the same runtime grant the
