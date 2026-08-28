@@ -346,9 +346,10 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content
-                  className="min-w-40 bg-bg border border-border rounded-md shadow-lg py-1 z-50"
+                  className="min-w-[min(10rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto bg-bg border border-border rounded-md shadow-lg py-1 z-50"
                   sideOffset={5}
                   align="end"
+                  collisionPadding={8}
                   onCloseAutoFocus={(e) => e.preventDefault()}
                 >
                   <DropdownMenu.Item

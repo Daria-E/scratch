@@ -7,8 +7,10 @@ import {
   type ReactNode,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getSettings, updateSettings } from "../services/notes";
 import { SIDEBAR_MIN_PX, SIDEBAR_MAX_PX } from "../lib/sidebar";
+import { applyInterfaceZoom } from "../lib/interfaceZoom";
 import type {
   ThemeSettings,
   EditorFontSettings,
@@ -354,7 +356,9 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   useEffect(() => {
     const root = document.documentElement;
     root.classList.add("zoom-no-transition");
-    root.style.zoom = String(interfaceZoom);
+    applyInterfaceZoom(interfaceZoom, root, getCurrentWebview()).catch(
+      (error) => console.error("Failed to apply interface zoom:", error),
+    );
     const raf = requestAnimationFrame(() => {
       root.classList.remove("zoom-no-transition");
     });

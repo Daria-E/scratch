@@ -3,7 +3,11 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { toast } from "sonner";
-import { Editor, type PreviewModeData } from "../editor/Editor";
+import {
+  Editor,
+  type EditorDocumentController,
+  type PreviewModeData,
+} from "../editor/Editor";
 import * as filesService from "../../services/files";
 import { SettingsPage } from "../settings";
 import { EditorWindowMenu, pickMarkdownFile } from "./EditorWindowMenu";
@@ -12,6 +16,7 @@ import { useWindowShell } from "../WindowShell";
 import type { Editor as TiptapEditor } from "@tiptap/react";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { isDraftPath } from "../../services/notes";
+import { saveDocumentToFolder } from "../../lib/saveToFolder";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -24,7 +29,7 @@ import {
 
 interface PreviewAppProps {
   filePath: string;
-  onOpenNotes?: () => void;
+  onOpenNotes?: (noteId?: string) => void;
   onFilePathChange?: (path: string | null) => void;
 }
 
@@ -42,13 +47,22 @@ export function PreviewApp({
   const [showSettings, setShowSettings] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const editorRef = useRef<TiptapEditor | null>(null);
+  const documentControllerRef = useRef<EditorDocumentController | null>(null);
+  const [documentControllerReady, setDocumentControllerReady] =
+    useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const savingRef = useRef(false);
   const { openShortcutsModal } = useWindowShell();
   const [filePath, setFilePath] = useState(initialFilePath);
-  const [isDraft, setIsDraft] = useState(false);
+  const [draftInfo, setDraftInfo] = useState<{
+    path: string;
+    isDraft: boolean | null;
+  }>({ path: initialFilePath, isDraft: null });
+  const isDraft = draftInfo.path === filePath ? draftInfo.isDraft : null;
   const [abandonPrompt, setAbandonPrompt] = useState<{
     resolve: (choice: AbandonChoice) => void;
   } | null>(null);
-  const isDraftRef = useRef(false);
+  const isDraftRef = useRef<boolean | null>(null);
   const filePathRef = useRef(initialFilePath);
   const discardedPathsRef = useRef<Set<string>>(new Set());
   const guardActiveRef = useRef(false);
@@ -60,10 +74,39 @@ export function PreviewApp({
   useEffect(() => setFilePath(initialFilePath), [initialFilePath]);
   useEffect(() => onFilePathChange?.(filePath), [filePath, onFilePathChange]);
 
+  const handleDocumentControllerReady = useCallback(
+    (controller: EditorDocumentController | null) => {
+      documentControllerRef.current = controller;
+      setDocumentControllerReady(controller !== null);
+    },
+    [],
+  );
+
   useEffect(() => {
+    if (!isSaving) return;
+    const blockKeyboardInteraction = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    window.addEventListener("keydown", blockKeyboardInteraction, true);
+    return () => {
+      window.removeEventListener("keydown", blockKeyboardInteraction, true);
+    };
+  }, [isSaving]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDraftInfo({ path: filePath, isDraft: null });
     isDraftPath(filePath)
-      .then(setIsDraft)
-      .catch(() => setIsDraft(false));
+      .then((draft) => {
+        if (!cancelled) setDraftInfo({ path: filePath, isDraft: draft });
+      })
+      .catch(() => {
+        if (!cancelled) setDraftInfo({ path: filePath, isDraft: false });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [filePath]);
   const [content, setContent] = useState<string | null>(null);
   const [title, setTitle] = useState("");
@@ -71,6 +114,7 @@ export function PreviewApp({
   const [hasExternalChanges, setHasExternalChanges] = useState(false);
   const [reloadVersion, setReloadVersion] = useState(0);
   const [focusMode, setFocusMode] = useState(false);
+  const [isDocumentEmpty, setIsDocumentEmpty] = useState(true);
   const recentlySavedRef = useRef(false);
 
   // Load the file whenever the window targets a different path
@@ -121,16 +165,11 @@ export function PreviewApp({
     async (newContent: string) => {
       // A discarded draft must stay deleted; late autosaves would resurrect it
       if (discardedPathsRef.current.has(filePath)) return;
-      try {
-        const result = await filesService.saveFileDirect(filePath, newContent);
-        recentlySavedRef.current = true;
-        setModified(result.modified);
-        setTitle(result.title);
-        setHasExternalChanges(false);
-      } catch (error) {
-        console.error("Failed to save file:", error);
-        toast.error(`Failed to save: ${error}`);
-      }
+      const result = await filesService.saveFileDirect(filePath, newContent);
+      recentlySavedRef.current = true;
+      setModified(result.modified);
+      setTitle(result.title);
+      setHasExternalChanges(false);
     },
     [filePath],
   );
@@ -168,8 +207,8 @@ export function PreviewApp({
   }, [filePath]);
 
   const draftIsEmpty = useCallback(async (path: string): Promise<boolean> => {
-    const editor = editorRef.current;
-    if (editor && !editor.isDestroyed) return editor.isEmpty;
+    const controller = documentControllerRef.current;
+    if (controller) return controller.isEmpty();
     // Editor unmounted (settings view): its unmount flush made the file current
     try {
       return (await filesService.readFileDirect(path)).content.trim() === "";
@@ -180,8 +219,12 @@ export function PreviewApp({
 
   const confirmAbandonDraft =
     useCallback(async (): Promise<AbandonOutcome> => {
-      if (!isDraftRef.current) return { proceed: true };
+      if (savingRef.current) return { proceed: false };
       const path = filePathRef.current;
+      const draft =
+        isDraftRef.current ??
+        (await isDraftPath(path).catch(() => false));
+      if (!draft) return { proceed: true };
       if (discardedPathsRef.current.has(path)) {
         return { proceed: true, newPath: null };
       }
@@ -349,7 +392,7 @@ export function PreviewApp({
       // Cmd+S: drafts need a destination; saved files autosave already
       if (modKey && !e.shiftKey && keyIs(e, "s")) {
         e.preventDefault();
-        if (isDraft) {
+        if (isDraft !== false) {
           saveAs().catch((error) => {
             console.error("Failed to save document:", error);
             toast.error("Failed to save");
@@ -388,22 +431,42 @@ export function PreviewApp({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [focusMode, reload, isDraft, saveAs, openFileDialog]);
 
-  const [isSaving, setIsSaving] = useState(false);
-  const savingRef = useRef(false);
-
   const handleSaveToFolder = useCallback(async () => {
     if (savingRef.current) return;
+    const controller = documentControllerRef.current;
+    if (!controller) {
+      toast.error("Document is not ready to save");
+      return;
+    }
     savingRef.current = true;
     setIsSaving(true);
     try {
-      await filesService.importFileToFolder(filePath);
-      if (isDraftRef.current) {
-        discardedPathsRef.current.add(filePath);
-        await filesService.discardDraft(filePath).catch(() => undefined);
-      }
-      // Backend emits select-note + focuses main window; close this preview
-      skipCloseGuardRef.current = true;
-      await getCurrentWindow().close();
+      const isEmpty = controller.isEmpty();
+      const draft =
+        isDraftRef.current ??
+        (await isDraftPath(filePath).catch(() => false));
+      await saveDocumentToFolder(
+        { isDraft: draft, isEmpty },
+        {
+          flushCurrentDocument: async () => {
+            await controller.flush();
+          },
+          importDocument: () => filesService.importFileToFolder(filePath),
+          retireDraft: async () => {
+            discardedPathsRef.current.add(filePath);
+            await filesService.discardDraft(filePath).catch(() => undefined);
+            onFilePathChange?.(null);
+          },
+          // The default editor lives in the main window and can switch hosts in
+          // place. Standalone preview windows keep the existing close-and-focus
+          // behavior after the backend notifies the main Notes window.
+          openNotes: onFilePathChange ? onOpenNotes : undefined,
+          closeWindow: async () => {
+            skipCloseGuardRef.current = true;
+            await getCurrentWindow().close();
+          },
+        },
+      );
     } catch (error) {
       console.error("Failed to save to folder:", error);
       toast.error(`Failed to save to folder: ${error}`);
@@ -411,7 +474,7 @@ export function PreviewApp({
       savingRef.current = false;
       setIsSaving(false);
     }
-  }, [filePath]);
+  }, [filePath, onFilePathChange, onOpenNotes]);
 
   const previewData: PreviewModeData = {
     content,
@@ -487,20 +550,41 @@ export function PreviewApp({
         key={filePath}
         focusMode={focusMode}
         previewMode={previewData}
+        interactionLocked={isSaving}
         onSaveToFolder={handleSaveToFolder}
-        saveToFolderDisabled={isSaving}
+        saveToFolderDisabled={
+          isSaving ||
+          !documentControllerReady ||
+          isDraft === null ||
+          (isDraft && isDocumentEmpty)
+        }
+        saveToFolderDisabledReason={
+          isDraft === true && isDocumentEmpty
+            ? "Start writing to save in Notes"
+            : undefined
+        }
         onEditorReady={(editor) => {
           editorRef.current = editor;
         }}
+        onDocumentControllerReady={handleDocumentControllerReady}
+        onDocumentEmptyChange={setIsDocumentEmpty}
         leadingMenu={
           <EditorWindowMenu
             onOpenSettings={() => setShowSettings(true)}
             onOpenNotes={onOpenNotes ? openNotes : undefined}
             onOpenFile={openFileInWindow}
-            onSaveAs={isDraft ? saveAs : undefined}
+            onSaveAs={isDraft === true ? saveAs : undefined}
           />
         }
       />
+
+      {isSaving && (
+        <div
+          className="fixed inset-0 z-[100] cursor-progress"
+          role="status"
+          aria-label="Saving document to Notes"
+        />
+      )}
 
       {abandonDialog}
 

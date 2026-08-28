@@ -36,6 +36,9 @@ optional mode rather than a precondition.
 
 There is no global mode. A window is either an **editor window** (one file, no sidebar)
 or the **notes window** (library, sidebar, search, git). Both may be open at once.
+The default main window can switch between those hosts in place. When it enters notes
+from an existing document, the notes header keeps a Back to document action that restores
+that exact file; creating a blank document remains a separate action.
 
 One app-config setting, `defaultWindow: "editor" | "notes"`, decides which kind opens
 when Scratch is launched with no file argument. Default is `"editor"`. Switching kinds at
@@ -67,6 +70,9 @@ notes mode, `Editor.tsx:2446`) opens a menu:
 - Open notes folder… — opens or focuses the notes window, picking a folder if unset
 - Settings — `mod+,`
 
+When Open notes folder… switches the current main window instead of focusing a separate
+notes window, the notes header exposes a persistent Back to document button.
+
 Recents live in app config and record files opened in editor windows. Files opened in the
 notes window are already listed under Notes and are not duplicated. A recent whose file
 no longer exists is shown dimmed and is removed when clicked, with a toast.
@@ -87,7 +93,12 @@ notes view — prompts Save / Discard / Cancel (invariant D). "Save" runs the sa
 flow; a cancelled save dialog cancels the abandonment. "Discard" deletes the draft file
 and its asset subfolder (`discard_draft`). An empty draft is deleted silently on
 abandonment. "Save to folder" imports the draft into the notes folder (with asset
-migration) and then discards it without prompting — it is a save.
+migration) and then discards it without prompting — it is a save. The current editor
+state is flushed before import (including pending Markdown source-mode edits), and the
+editor is locked until import and draft retirement finish. The main window then switches
+to the imported note. For an untouched empty draft the action is disabled ("Start
+writing to save in Notes") and its handler is also a no-op, so it cannot create an empty
+note or navigate away.
 
 What survives on disk is therefore only what a crash or kill left behind; those drafts
 appear in the header menu labeled "Recovered" and prompt normally when next abandoned.
@@ -198,7 +209,9 @@ window-agnostic shortcuts (zoom, settings). The AI modal stays notes-only. The c
 palette is capability-gated (decision revised 2026-08-27): it uses optional contexts and
 builds its command list from what the window provides, so editor windows get the
 document commands (copy, export, view toggles, settings) and notes windows additionally
-get note, search, git and AI commands.
+get note, search, git and AI commands. Interface zoom uses the native webview zoom API,
+not CSS `zoom`, so viewport-based popup positioning remains correct. Popup menus enable
+collision handling with window padding and cap their size to the available viewport.
 
 **B. One Editor instance edits exactly one document.** `Editor.tsx` assumes its note id
 changes only when a save renames the file; its rename heuristic

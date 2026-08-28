@@ -3,6 +3,7 @@ import {
   useLayoutEffect,
   useRef,
   useCallback,
+  useMemo,
   useState,
 } from "react";
 import {
@@ -39,6 +40,11 @@ import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 import { toast } from "sonner";
 import { keyIs, alt, isMac, isWindows, mod, shift, shortcut } from "../../lib/platform";
+import {
+  currentDocumentContent,
+  currentDocumentIsEmpty,
+  DocumentSaveQueue,
+} from "../../lib/editorDocument";
 
 // Prepend https:// if no protocol is present
 function normalizeUrl(url: string): string {
@@ -462,7 +468,8 @@ function FormatBar({
         </Tooltip>
         <DropdownMenu.Portal>
           <DropdownMenu.Content
-            className="p-2.5 bg-bg border border-border rounded-md shadow-lg z-50"
+            className="max-w-[calc(100vw-1rem)] max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-auto p-2.5 bg-bg border border-border rounded-md shadow-lg z-50"
+            collisionPadding={8}
             onCloseAutoFocus={(e) => e.preventDefault()}
           >
             <GridPicker
@@ -498,6 +505,11 @@ export interface PreviewModeData {
   reload: () => Promise<void>;
 }
 
+export interface EditorDocumentController {
+  isEmpty(): boolean;
+  flush(): Promise<string>;
+}
+
 interface EditorProps {
   onToggleSidebar?: () => void;
   sidebarVisible?: boolean;
@@ -505,8 +517,14 @@ interface EditorProps {
   previewMode?: PreviewModeData;
   leadingMenu?: React.ReactNode;
   onEditorReady?: (editor: TiptapEditor | null) => void;
+  onDocumentControllerReady?: (
+    controller: EditorDocumentController | null,
+  ) => void;
+  onDocumentEmptyChange?: (isEmpty: boolean) => void;
+  interactionLocked?: boolean;
   onSaveToFolder?: () => void;
   saveToFolderDisabled?: boolean;
+  saveToFolderDisabledReason?: string;
 }
 
 /**
@@ -567,10 +585,14 @@ export function Editor({
   sidebarVisible,
   focusMode,
   onEditorReady,
+  onDocumentControllerReady,
+  onDocumentEmptyChange,
+  interactionLocked = false,
   previewMode,
   leadingMenu,
   onSaveToFolder,
-  saveToFolderDisabled,
+  saveToFolderDisabled = false,
+  saveToFolderDisabledReason,
 }: EditorProps) {
   // Always call the hook (rules of hooks), but it returns null outside NotesProvider
   const notesCtx = useOptionalNotes();
@@ -612,6 +634,7 @@ export function Editor({
     ? parentDirectory(previewMode.filePath)
     : (notesCtx?.notesFolder ?? null);
   const [isSaving, setIsSaving] = useState(false);
+  const [saveQueue] = useState(() => new DocumentSaveQueue());
   // Force re-render when selection changes to update toolbar active states
   const [, setSelectionKey] = useState(0);
   const [copyMenuOpen, setCopyMenuOpen] = useState(false);
@@ -631,6 +654,9 @@ export function Editor({
   // Source mode state
   const [sourceMode, setSourceMode] = useState(false);
   const [sourceContent, setSourceContent] = useState("");
+  const sourceModeRef = useRef(false);
+  const sourceContentRef = useRef("");
+  const sourceNeedsSaveRef = useRef(false);
   const sourceTimeoutRef = useRef<number | null>(null);
   const sourceModeTransitionRef = useRef<{
     topBlockIndex: number;
@@ -656,6 +682,9 @@ export function Editor({
   const currentNoteIdRef = useRef<string | null>(null);
   // Track if we need to save (use ref to avoid computing markdown on every keystroke)
   const needsSaveRef = useRef(false);
+
+  sourceModeRef.current = sourceMode;
+  sourceContentRef.current = sourceContent;
   // Stable refs for wikilink click handler (avoids re-registering listener on every notes change)
   const notesRef = useRef(notes);
   notesRef.current = notes;
@@ -704,6 +733,29 @@ export function Editor({
     (editorInstance: ReturnType<typeof useEditor>) =>
       markdownFromEditor(editorInstance, documentBaseDir ?? undefined),
     [documentBaseDir],
+  );
+
+  const getCurrentDocumentState = useCallback(() => {
+    const richEditor = editorRef.current;
+    const inSourceMode = sourceModeRef.current;
+    return {
+      sourceMode: inSourceMode,
+      sourceContent: sourceContentRef.current,
+      richContent: !inSourceMode && richEditor
+        ? getMarkdown(richEditor)
+        : (currentNote?.content ?? ""),
+      richIsEmpty: !inSourceMode ? (richEditor?.isEmpty ?? true) : true,
+    };
+  }, [currentNote?.content, getMarkdown]);
+
+  const getCurrentDocumentContent = useCallback(
+    () => currentDocumentContent(getCurrentDocumentState()),
+    [getCurrentDocumentState],
+  );
+
+  const getCurrentDocumentIsEmpty = useCallback(
+    () => currentDocumentIsEmpty(getCurrentDocumentState()),
+    [getCurrentDocumentState],
   );
 
   // Load settings when note changes or notes are refreshed (e.g., after pin/unpin)
@@ -817,16 +869,25 @@ export function Editor({
 
   // Immediate save function (used for flushing)
   const saveImmediately = useCallback(
-    async (noteId: string, content: string) => {
-      setIsSaving(true);
-      try {
-        lastSaveRef.current = { noteId, content };
-        await saveNote(content, noteId);
-      } finally {
-        setIsSaving(false);
-      }
-    },
-    [saveNote],
+    (noteId: string, content: string) =>
+      saveQueue.enqueue(async () => {
+        setIsSaving(true);
+        try {
+          lastSaveRef.current = { noteId, content };
+          await saveNote(content, noteId);
+        } catch (error) {
+          if (
+            lastSaveRef.current?.noteId === noteId &&
+            lastSaveRef.current.content === content
+          ) {
+            lastSaveRef.current = null;
+          }
+          throw error;
+        } finally {
+          setIsSaving(false);
+        }
+      }),
+    [saveNote, saveQueue],
   );
 
   // Flush any pending save immediately (saves to the note currently loaded in editor)
@@ -835,14 +896,56 @@ export function Editor({
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
     }
+    if (sourceTimeoutRef.current) {
+      clearTimeout(sourceTimeoutRef.current);
+      sourceTimeoutRef.current = null;
+    }
 
     // Use loadedNoteIdRef (the note in the editor) not currentNoteIdRef (which may have changed)
-    if (needsSaveRef.current && editorRef.current && loadedNoteIdRef.current) {
+    if (
+      (needsSaveRef.current || sourceNeedsSaveRef.current) &&
+      loadedNoteIdRef.current
+    ) {
+      const hadRichChanges = needsSaveRef.current;
+      const hadSourceChanges = sourceNeedsSaveRef.current;
       needsSaveRef.current = false;
-      const markdown = getMarkdown(editorRef.current);
-      await saveImmediately(loadedNoteIdRef.current, markdown);
+      sourceNeedsSaveRef.current = false;
+      const content = getCurrentDocumentContent();
+      try {
+        await saveImmediately(loadedNoteIdRef.current, content);
+      } catch (error) {
+        if (hadRichChanges) needsSaveRef.current = true;
+        if (hadSourceChanges) sourceNeedsSaveRef.current = true;
+        throw error;
+      }
     }
-  }, [saveImmediately, getMarkdown]);
+  }, [getCurrentDocumentContent, saveImmediately]);
+
+  const flushCurrentDocument = useCallback(async (): Promise<string> => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    if (sourceTimeoutRef.current) {
+      clearTimeout(sourceTimeoutRef.current);
+      sourceTimeoutRef.current = null;
+    }
+
+    const noteId = loadedNoteIdRef.current ?? currentNoteIdRef.current;
+    if (!noteId) throw new Error("Document is not ready to save");
+
+    const content = getCurrentDocumentContent();
+    try {
+      await saveImmediately(noteId, content);
+      needsSaveRef.current = false;
+      sourceNeedsSaveRef.current = false;
+    } catch (error) {
+      if (sourceModeRef.current) sourceNeedsSaveRef.current = true;
+      else needsSaveRef.current = true;
+      throw error;
+    }
+    return content;
+  }, [getCurrentDocumentContent, saveImmediately]);
 
   // Schedule a debounced save (markdown computed only when timer fires)
   const scheduleSave = useCallback(() => {
@@ -863,11 +966,17 @@ export function Editor({
       // Compute markdown only now, when we actually save
       if (editorRef.current) {
         needsSaveRef.current = false;
-        const markdown = getMarkdown(editorRef.current);
-        await saveImmediately(savingNoteId, markdown);
+        const content = getCurrentDocumentContent();
+        try {
+          await saveImmediately(savingNoteId, content);
+        } catch (error) {
+          needsSaveRef.current = true;
+          console.error("Failed to save note:", error);
+          toast.error("Failed to save note");
+        }
       }
     }, 500);
-  }, [saveImmediately, getMarkdown, currentNote?.id]);
+  }, [saveImmediately, getCurrentDocumentContent, currentNote?.id]);
 
   const closeMathPopup = useCallback(() => {
     if (mathPopupRef.current) {
@@ -1606,8 +1715,10 @@ export function Editor({
     },
     onCreate: ({ editor: editorInstance }) => {
       editorRef.current = editorInstance;
+      onDocumentEmptyChange?.(editorInstance.isEmpty);
     },
-    onUpdate: () => {
+    onUpdate: ({ editor: editorInstance }) => {
+      onDocumentEmptyChange?.(editorInstance.isEmpty);
       if (isLoadingRef.current) return;
       scheduleSave();
     },
@@ -1628,10 +1739,37 @@ export function Editor({
   // Track reloadVersion to detect manual refreshes
   const lastReloadVersionRef = useRef(0);
 
+  const documentControllerHandlersRef = useRef<EditorDocumentController>({
+    isEmpty: () => true,
+    flush: async () => {
+      throw new Error("Document is not ready to save");
+    },
+  });
+  documentControllerHandlersRef.current = {
+    isEmpty: getCurrentDocumentIsEmpty,
+    flush: flushCurrentDocument,
+  };
+  const documentController = useMemo<EditorDocumentController>(
+    () => ({
+      isEmpty: () => documentControllerHandlersRef.current.isEmpty(),
+      flush: () => documentControllerHandlersRef.current.flush(),
+    }),
+    [],
+  );
+
   // Notify parent component when editor is ready
   useEffect(() => {
     onEditorReady?.(editor);
   }, [editor, onEditorReady]);
+
+  useEffect(() => {
+    onDocumentControllerReady?.(documentController);
+    return () => onDocumentControllerReady?.(null);
+  }, [documentController, onDocumentControllerReady]);
+
+  useEffect(() => {
+    editor?.setEditable(!interactionLocked);
+  }, [editor, interactionLocked]);
 
   // Sync notes list into editor storage for wikilink autocomplete
   useEffect(() => {
@@ -1812,19 +1950,29 @@ export function Editor({
         loadedModifiedRef.current = currentNote.modified;
         lastSaveRef.current = null;
         // If user typed during the rename, flush with the now-correct ID
-        if (needsSaveRef.current) {
-          flushPendingSave();
+        if (needsSaveRef.current || sourceNeedsSaveRef.current) {
+          void flushPendingSave().catch((error) => {
+            console.error("Failed to save note:", error);
+            toast.error("Failed to save note");
+          });
         }
         return;
       }
     }
 
     // Flush any pending save before switching to a different note
-    if (!isSameNote && needsSaveRef.current) {
-      flushPendingSave();
+    if (
+      !isSameNote &&
+      (needsSaveRef.current || sourceNeedsSaveRef.current)
+    ) {
+      void flushPendingSave().catch((error) => {
+        console.error("Failed to save note:", error);
+        toast.error("Failed to save note");
+      });
     }
     // Reset source mode when genuinely switching notes (renames return early above)
     if (!isSameNote) {
+      sourceModeRef.current = false;
       setSourceMode(false);
       if (sourceTimeoutRef.current) {
         clearTimeout(sourceTimeoutRef.current);
@@ -1945,15 +2093,28 @@ export function Editor({
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
+      if (sourceTimeoutRef.current) {
+        clearTimeout(sourceTimeoutRef.current);
+      }
       // Flush any pending save before unmounting
-      if (needsSaveRef.current && editorRef.current) {
+      if (
+        (needsSaveRef.current || sourceNeedsSaveRef.current) &&
+        editorRef.current
+      ) {
         needsSaveRef.current = false;
-        const manager = editorRef.current.storage.markdown?.manager;
-        const markdown = manager
-          ? manager.serialize(editorRef.current.getJSON())
-          : editorRef.current.getText();
+        sourceNeedsSaveRef.current = false;
+        const currentEditor = editorRef.current;
+        const manager = currentEditor.storage.markdown?.manager;
+        const markdown = sourceModeRef.current
+          ? sourceContentRef.current
+          : manager
+            ? manager.serialize(currentEditor.getJSON())
+            : currentEditor.getText();
         // Fire and forget - save will complete in background
-        saveNote(markdown);
+        void saveQueue.enqueue(() => saveNote(markdown)).catch((error) => {
+          console.error("Failed to save note:", error);
+          toast.error("Failed to save note");
+        });
       }
       if (linkPopupRef.current) {
         linkPopupRef.current.destroy();
@@ -2374,7 +2535,10 @@ export function Editor({
       }
 
       sourceModeTransitionRef.current = { topBlockIndex, cursorBlockIndex, md };
+      sourceContentRef.current = md;
       setSourceContent(md);
+      onDocumentEmptyChange?.(md.trim() === "");
+      sourceModeRef.current = true;
       setSourceMode(true);
     } else {
       // === Exiting source mode (textarea → TipTap) ===
@@ -2415,9 +2579,16 @@ export function Editor({
       } else {
         editor.commands.setContent(sourceContent);
       }
+      sourceModeRef.current = false;
       setSourceMode(false);
     }
-  }, [editor, sourceMode, sourceContent, getMarkdown]);
+  }, [
+    editor,
+    sourceMode,
+    sourceContent,
+    getMarkdown,
+    onDocumentEmptyChange,
+  ]);
 
   // Restore focus and scroll position after source mode transitions.
   // useLayoutEffect runs synchronously after React commits DOM changes,
@@ -2500,26 +2671,30 @@ export function Editor({
   // Auto-save in source mode with debounce
   const handleSourceChange = useCallback(
     (value: string) => {
+      sourceContentRef.current = value;
       setSourceContent(value);
+      sourceNeedsSaveRef.current = true;
+      onDocumentEmptyChange?.(value.trim() === "");
       if (sourceTimeoutRef.current) {
         clearTimeout(sourceTimeoutRef.current);
       }
       sourceTimeoutRef.current = window.setTimeout(async () => {
+        sourceTimeoutRef.current = null;
         if (currentNote) {
-          setIsSaving(true);
           try {
-            lastSaveRef.current = { noteId: currentNote.id, content: value };
-            await saveNote(value, currentNote.id);
+            await saveImmediately(currentNote.id, value);
+            if (sourceContentRef.current === value) {
+              sourceNeedsSaveRef.current = false;
+            }
           } catch (error) {
+            sourceNeedsSaveRef.current = true;
             console.error("Failed to save note:", error);
             toast.error("Failed to save note");
-          } finally {
-            setIsSaving(false);
           }
         }
       }, 300);
     },
-    [currentNote, saveNote],
+    [currentNote, onDocumentEmptyChange, saveImmediately],
   );
 
   if (!currentNote) {
@@ -2740,9 +2915,10 @@ export function Editor({
             </Tooltip>
             <DropdownMenu.Portal>
               <DropdownMenu.Content
-                className="min-w-35 bg-bg border border-border rounded-md shadow-lg py-1 z-50"
+                className="min-w-[min(8.75rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto bg-bg border border-border rounded-md shadow-lg py-1 z-50"
                 sideOffset={5}
                 align="end"
+                collisionPadding={8}
                 onCloseAutoFocus={(e) => {
                   // Prevent focus returning to trigger button
                   e.preventDefault();
@@ -2801,18 +2977,20 @@ export function Editor({
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
           {onSaveToFolder && (
-            <Tooltip content="Save in Folder">
-              <IconButton
-                onClick={onSaveToFolder}
-                aria-label="Save in Folder"
-                disabled={saveToFolderDisabled}
-              >
-                {saveToFolderDisabled ? (
-                  <SpinnerIcon className="w-4.25 h-4.25 animate-spin" />
-                ) : (
-                  <FolderPlusIcon className="w-4.25 h-4.25 stroke-[1.6]" />
-                )}
-              </IconButton>
+            <Tooltip content={saveToFolderDisabledReason ?? "Save in Folder"}>
+              <span className="inline-flex">
+                <IconButton
+                  onClick={onSaveToFolder}
+                  aria-label="Save in Folder"
+                  disabled={saveToFolderDisabled}
+                >
+                  {saveToFolderDisabled && !saveToFolderDisabledReason ? (
+                    <SpinnerIcon className="w-4.25 h-4.25 animate-spin" />
+                  ) : (
+                    <FolderPlusIcon className="w-4.25 h-4.25 stroke-[1.6]" />
+                  )}
+                </IconButton>
+              </span>
             </Tooltip>
           )}
         </div>
@@ -2848,6 +3026,7 @@ export function Editor({
               <textarea
                 value={sourceContent}
                 onChange={(e) => handleSourceChange(e.target.value)}
+                readOnly={interactionLocked}
                 wrap="off"
                 dir={textDirection}
                 className="w-full h-full bg-transparent text-text focus:outline-none resize-none px-6 pt-8 pb-24 mx-auto block"

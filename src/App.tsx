@@ -16,12 +16,14 @@ import { EditorWindowMenu } from "./components/preview/EditorWindowMenu";
 import { CommandPalette } from "./components/command-palette/CommandPalette";
 import { SettingsPage } from "./components/settings";
 import {
+  ArrowLeftIcon,
   SpinnerIcon,
   ClaudeIcon,
   CodexIcon,
   OpenCodeIcon,
   OllamaIcon,
 } from "./components/icons";
+import { IconButton } from "./components/ui";
 import { AiEditModal } from "./components/ai/AiEditModal";
 import { AiResponseToast } from "./components/ai/AiResponseToast";
 import { PreviewApp } from "./components/preview/PreviewApp";
@@ -33,6 +35,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as aiService from "./services/ai";
 import type { AiProvider } from "./services/ai";
 import { isMac, isWindows, keyIs } from "./lib/platform";
+import { resolveEditorWindowState } from "./lib/appNavigation";
 
 // Detect preview mode from URL search params
 function getWindowMode(): {
@@ -52,9 +55,17 @@ type ViewState = "notes" | "settings";
 
 interface AppContentProps {
   onLeaveNotes?: () => void;
+  returnToDocument?: boolean;
+  pendingNoteId?: string | null;
+  onPendingNoteHandled?: () => void;
 }
 
-function AppContent({ onLeaveNotes }: AppContentProps) {
+function AppContent({
+  onLeaveNotes,
+  returnToDocument = false,
+  pendingNoteId,
+  onPendingNoteHandled,
+}: AppContentProps) {
   const {
     notesFolder,
     isLoading,
@@ -81,6 +92,18 @@ function AppContent({ onLeaveNotes }: AppContentProps) {
   const [focusMode, setFocusMode] = useState(false);
   const [aiProvider, setAiProvider] = useState<AiProvider>("claude");
   const editorRef = useRef<TiptapEditor | null>(null);
+
+  useEffect(() => {
+    if (isLoading || !notesFolder || !pendingNoteId) return;
+    void selectNote(pendingNoteId);
+    onPendingNoteHandled?.();
+  }, [
+    isLoading,
+    notesFolder,
+    pendingNoteId,
+    onPendingNoteHandled,
+    selectNote,
+  ]);
 
   // Listen for set-notes-folder event from CLI (scratch .)
   // Placed here in AppContent where both NotesContext and ThemeContext are available
@@ -458,10 +481,22 @@ function AppContent({ onLeaveNotes }: AppContentProps) {
                 editorRef.current = editor;
               }}
               leadingMenu={
-                <EditorWindowMenu
-                  onNewDocument={onLeaveNotes}
-                  onOpenSettings={toggleSettings}
-                />
+                <>
+                  {returnToDocument && onLeaveNotes && (
+                    <IconButton
+                      onClick={onLeaveNotes}
+                      title="Back to document"
+                      aria-label="Back to document"
+                      className="shrink-0"
+                    >
+                      <ArrowLeftIcon className="w-4.5 h-4.5 stroke-[1.5]" />
+                    </IconButton>
+                  )}
+                  <EditorWindowMenu
+                    onNewDocument={returnToDocument ? undefined : onLeaveNotes}
+                    onOpenSettings={toggleSettings}
+                  />
+                </>
               }
             />
           </>
@@ -492,6 +527,7 @@ function AppContent({ onLeaveNotes }: AppContentProps) {
         onToggleFocusMode={toggleFocusMode}
         editorRef={editorRef}
         onLeaveNotes={onLeaveNotes}
+        returnToDocument={returnToDocument}
       />
       <AiEditModal
         open={aiModalOpen}
@@ -612,6 +648,7 @@ function App() {
   // an editor window (opened on a fresh draft) or the notes library.
   const [editorFile, setEditorFile] = useState<string | null>(null);
   const [showNotes, setShowNotes] = useState(false);
+  const [pendingNoteId, setPendingNoteId] = useState<string | null>(null);
   const [resolvingWindowKind, setResolvingWindowKind] = useState(!isPreview);
 
   useEffect(() => {
@@ -670,18 +707,28 @@ function App() {
     }
   }, [editorFile]);
 
-  const editorWindowFile = showNotes
-    ? null
-    : isPreview && previewFile
-      ? decodeURIComponent(previewFile)
-      : editorFile;
+  const openNotes = useCallback((noteId?: string) => {
+    setPendingNoteId(noteId ?? null);
+    setShowNotes(true);
+  }, []);
+
+  const clearPendingNote = useCallback(() => setPendingNoteId(null), []);
+
+  const decodedPreviewFile =
+    isPreview && previewFile ? decodeURIComponent(previewFile) : null;
+  const { activeFile: editorWindowFile, returnFile } =
+    resolveEditorWindowState({
+      showNotes,
+      previewFile: decodedPreviewFile,
+      editorFile,
+    });
 
   if (editorWindowFile) {
     return (
       <WindowShell>
         <PreviewApp
           filePath={editorWindowFile}
-          onOpenNotes={() => setShowNotes(true)}
+          onOpenNotes={openNotes}
           onFilePathChange={isPreview ? undefined : setEditorFile}
         />
       </WindowShell>
@@ -697,7 +744,12 @@ function App() {
     <WindowShell>
       <NotesProvider>
         <GitProvider>
-          <AppContent onLeaveNotes={onLeaveNotes} />
+          <AppContent
+            onLeaveNotes={onLeaveNotes}
+            returnToDocument={returnFile !== null}
+            pendingNoteId={pendingNoteId}
+            onPendingNoteHandled={clearPendingNote}
+          />
         </GitProvider>
       </NotesProvider>
     </WindowShell>

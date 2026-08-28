@@ -58,9 +58,11 @@ import {
   FolderIcon,
   FolderPlusIcon,
   KeyboardIcon,
+  ArrowLeftIcon,
 } from "../icons";
 import { mod, shift, shortcut } from "../../lib/platform";
 import type { AiProvider } from "../../services/ai";
+import { resolveLeaveNotesCommand } from "../../lib/appNavigation";
 
 interface Command {
   id: string;
@@ -80,6 +82,7 @@ interface CommandPaletteProps {
   onToggleFocusMode?: () => void;
   editorRef?: React.RefObject<Editor | null>;
   onLeaveNotes?: () => void;
+  returnToDocument?: boolean;
   previewNote?: Note | null;
   onNewDocument?: () => void;
   onOpenFileDialog?: () => void;
@@ -89,6 +92,7 @@ interface CommandPaletteProps {
 export function CommandPalette({
   open,
   onLeaveNotes,
+  returnToDocument = false,
   previewNote,
   onNewDocument,
   onOpenFileDialog,
@@ -220,6 +224,22 @@ export function CommandPalette({
         icon: <FolderIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
         action: () => {
           onOpenNotes();
+          onClose();
+        },
+      });
+    }
+
+    if (onLeaveNotes) {
+      const leaveNotesCommand = resolveLeaveNotesCommand(returnToDocument);
+      baseCommands.push({
+        ...leaveNotesCommand,
+        icon: returnToDocument ? (
+          <ArrowLeftIcon className="w-4.5 h-4.5 stroke-[1.5]" />
+        ) : (
+          <AddNoteIcon className="w-4.5 h-4.5 stroke-[1.5]" />
+        ),
+        action: () => {
+          onLeaveNotes();
           onClose();
         },
       });
@@ -372,15 +392,6 @@ export function CommandPalette({
               console.error("Failed to copy HTML:", error);
               toast.error("Failed to copy");
             }
-          },
-        },
-        {
-          id: "blank-document",
-          label: "Blank document (no notes folder)",
-          icon: <AddNoteIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
-          action: () => {
-            onLeaveNotes?.();
-            onClose();
           },
         },
         {
@@ -608,6 +619,8 @@ export function CommandPalette({
     onNewDocument,
     onOpenFileDialog,
     onOpenNotes,
+    onLeaveNotes,
+    returnToDocument,
     availableAiProviders,
     setTheme,
     gitEnabled,

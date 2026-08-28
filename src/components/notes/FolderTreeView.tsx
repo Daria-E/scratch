@@ -183,7 +183,10 @@ const FileItem = memo(function FileItem({
         </div>
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
-        <ContextMenu.Content className="min-w-44 bg-bg border border-border rounded-md shadow-lg py-1 z-50">
+        <ContextMenu.Content
+          className="min-w-[min(11rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] max-h-[var(--radix-context-menu-content-available-height)] overflow-y-auto bg-bg border border-border rounded-md shadow-lg py-1 z-50"
+          collisionPadding={8}
+        >
           <ContextMenu.Item className={menuItemClass} onSelect={handlePin}>
             <PinIcon className="w-4 h-4 stroke-[1.6]" />
             {isPinned ? "Unpin" : "Pin"}
@@ -403,7 +406,10 @@ const FolderItemComponent = memo(function FolderItem({
         </div>
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
-        <ContextMenu.Content className="min-w-44 bg-bg border border-border rounded-md shadow-lg py-1 z-50">
+        <ContextMenu.Content
+          className="min-w-[min(11rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] max-h-[var(--radix-context-menu-content-available-height)] overflow-y-auto bg-bg border border-border rounded-md shadow-lg py-1 z-50"
+          collisionPadding={8}
+        >
           <ContextMenu.Item
             className={menuItemClass}
             onSelect={() => onCreateNoteHere(folder.path)}

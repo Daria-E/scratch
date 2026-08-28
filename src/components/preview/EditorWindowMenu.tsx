@@ -120,9 +120,10 @@ export function EditorWindowMenu({
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
-          className="min-w-52 max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto bg-bg border border-border rounded-md shadow-lg py-1 z-50"
+          className="min-w-[min(13rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto bg-bg border border-border rounded-md shadow-lg py-1 z-50"
           sideOffset={5}
           align="start"
+          collisionPadding={8}
         >
           <DropdownMenu.Item className={itemClass} onSelect={newDocument}>
             <AddNoteIcon className="w-4 h-4 stroke-[1.6]" />
