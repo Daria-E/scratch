@@ -2999,15 +2999,30 @@ fn copy_to_clipboard(app: AppHandle, text: String) -> Result<(), String> {
 
 // Classify by content, not extension or OS registry: bytes are the only
 // cross-platform truth. SVG is XML text, invisible to magic bytes.
+fn xml_root_is_svg(head: &[u8]) -> bool {
+    use quick_xml::events::Event;
+
+    let text = String::from_utf8_lossy(head);
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let mut reader = quick_xml::Reader::from_str(text);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(root)) | Ok(Event::Empty(root)) => {
+                return root.local_name().as_ref() == b"svg";
+            }
+            Ok(Event::Eof) | Err(_) => return false,
+            _ => {}
+        }
+    }
+}
+
 fn sniff_image(head: &[u8]) -> Option<&'static str> {
     if let Some(kind) = infer::get(head) {
         if kind.matcher_type() == infer::MatcherType::Image {
             return Some(kind.extension());
         }
     }
-    let text = String::from_utf8_lossy(head);
-    let trimmed = text.trim_start();
-    if trimmed.starts_with("<svg") || (trimmed.starts_with("<?xml") && text.contains("<svg")) {
+    if xml_root_is_svg(head) {
         return Some("svg");
     }
     None
@@ -3022,6 +3037,23 @@ fn image_file_extension(path: &Path) -> Option<&'static str> {
         return None;
     }
     sniff_image(&buf[..read])
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClipboardFile {
+    path: String,
+    is_image: bool,
+}
+
+fn classify_clipboard_files(candidates: Vec<PathBuf>) -> Vec<ClipboardFile> {
+    candidates
+        .into_iter()
+        .map(|path| ClipboardFile {
+            is_image: image_file_extension(&path).is_some(),
+            path: path.to_string_lossy().to_string(),
+        })
+        .collect()
 }
 
 fn local_path_from_file_uri(uri: &str) -> Option<PathBuf> {
@@ -3082,13 +3114,9 @@ fn clipboard_file_candidates(_app: &AppHandle) -> Vec<PathBuf> {
 }
 
 #[tauri::command]
-async fn clipboard_image_files(app: AppHandle) -> Vec<String> {
+async fn clipboard_files(app: AppHandle) -> Vec<ClipboardFile> {
     tokio::task::spawn_blocking(move || {
-        clipboard_file_candidates(&app)
-            .into_iter()
-            .filter(|path| path.is_file() && image_file_extension(path).is_some())
-            .map(|path| path.to_string_lossy().to_string())
-            .collect()
+        classify_clipboard_files(clipboard_file_candidates(&app))
     })
     .await
     .unwrap_or_default()
@@ -3196,17 +3224,25 @@ async fn copy_image_to_assets(
         }
     };
 
-    let source = PathBuf::from(&source_path);
+    copy_image_file_to_assets(
+        Path::new(&source_path),
+        &folder,
+        doc_stem.as_deref(),
+    )
+    .await
+}
+
+async fn copy_image_file_to_assets(
+    source: &Path,
+    folder: &str,
+    doc_stem: Option<&str>,
+) -> Result<String, String> {
     if !source.exists() {
         return Err("Source image file does not exist".to_string());
     }
 
-    let sniffed = image_file_extension(&source)
+    let extension = image_file_extension(source)
         .ok_or("Only image files can be copied to assets".to_string())?;
-    let extension = source
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or(sniffed);
 
     // Get original filename (without extension)
     let original_name = source
@@ -3218,10 +3254,10 @@ async fn copy_image_to_assets(
     let sanitized_name = sanitize_filename(original_name);
 
     let (target_path, link) =
-        allocate_asset_path(&folder, doc_stem.as_deref(), &sanitized_name, extension).await?;
+        allocate_asset_path(folder, doc_stem, &sanitized_name, extension).await?;
 
     // Copy the file
-    fs::copy(&source, &target_path)
+    fs::copy(source, &target_path)
         .await
         .map_err(|_| "Failed to copy image".to_string())?;
 
@@ -4701,7 +4737,7 @@ pub fn run() {
             new_editor_window,
             save_draft_as,
             discard_draft,
-            clipboard_image_files,
+            clipboard_files,
             is_draft_path,
             list_export_fonts,
             get_active_export_preset,
@@ -4871,7 +4907,10 @@ mod tests {
 
 #[cfg(test)]
 mod image_sniff_tests {
-    use super::{image_file_extension, local_path_from_file_uri, sniff_image};
+    use super::{
+        classify_clipboard_files, copy_image_file_to_assets, image_file_extension,
+        local_path_from_file_uri, sniff_image,
+    };
     use std::path::PathBuf;
 
     const PNG_HEAD: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
@@ -4885,6 +4924,15 @@ mod image_sniff_tests {
             sniff_image(b"<?xml version=\"1.0\"?>\n<svg xmlns=\"x\">"),
             Some("svg")
         );
+        assert_eq!(
+            sniff_image(b"\xef\xbb\xbf<!-- exported -->\n<svg xmlns=\"x\">"),
+            Some("svg")
+        );
+        assert_eq!(
+            sniff_image(b"<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\">\n<svg>"),
+            Some("svg")
+        );
+        assert_eq!(sniff_image(b"<document><svg></svg></document>"), None);
         assert_eq!(sniff_image(b"just some plain text"), None);
         assert_eq!(sniff_image(b"%PDF-1.7 not an image"), None);
 
@@ -4914,6 +4962,61 @@ mod image_sniff_tests {
             Some(PathBuf::from("C:/Users/d/a.png"))
         );
         assert_eq!(local_path_from_file_uri("https://x/y.png"), None);
+    }
+
+    #[test]
+    fn clipboard_file_classification_keeps_non_images() {
+        let dir = std::env::temp_dir().join("scratch-clipboard-classify-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let image = dir.join("picture.png");
+        let document = dir.join("notes.txt");
+        std::fs::write(&image, PNG_HEAD).expect("write image");
+        std::fs::write(&document, b"plain text").expect("write document");
+
+        let files = classify_clipboard_files(vec![image.clone(), document.clone()]);
+
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].path, image.to_string_lossy());
+        assert!(files[0].is_image);
+        assert_eq!(files[1].path, document.to_string_lossy());
+        assert!(!files[1].is_image);
+    }
+
+    #[test]
+    fn clipboard_file_classification_keeps_directories_as_paths() {
+        let dir = std::env::temp_dir().join("scratch-clipboard-directory-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+
+        let files = classify_clipboard_files(vec![dir.clone()]);
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, dir.to_string_lossy());
+        assert!(!files[0].is_image);
+    }
+
+    #[test]
+    fn misnamed_svg_is_copied_with_its_content_extension() {
+        let dir = std::env::temp_dir().join("scratch-misnamed-svg-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let source_dir = dir.join("source");
+        let target_dir = dir.join("target");
+        std::fs::create_dir_all(&source_dir).expect("mkdir source");
+        std::fs::create_dir_all(&target_dir).expect("mkdir target");
+        let source = source_dir.join("diagram.txt");
+        std::fs::write(&source, b"<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>")
+            .expect("write svg");
+
+        let link = tauri::async_runtime::block_on(copy_image_file_to_assets(
+            &source,
+            target_dir.to_str().expect("target path"),
+            Some("note"),
+        ))
+        .expect("copy image");
+
+        assert_eq!(link, "assets/note/diagram.svg");
+        assert!(target_dir.join("assets/note/diagram.svg").is_file());
     }
 }
 

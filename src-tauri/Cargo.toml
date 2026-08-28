@@ -40,6 +40,7 @@ include_dir = "0.7.4"
 typst-layout = "0.15"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 infer = "0.19"
+quick-xml = "0.39"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"

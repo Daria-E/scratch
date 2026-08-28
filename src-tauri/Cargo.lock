@@ -18,6 +18,7 @@ dependencies = [
  "objc2-foundation",
  "open",
  "pulldown-cmark",
+ "quick-xml 0.39.2",
  "regex",
  "serde",
  "serde_json",

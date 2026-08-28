@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test:clipboard": "esbuild tests/clipboardPaste.test.ts --bundle --platform=node --format=esm --outfile=dist/clipboardPaste.test.mjs && node dist/clipboardPaste.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

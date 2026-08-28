@@ -66,8 +66,19 @@ import {
   fileStem,
   markdownFromEditor,
   parentDirectory,
-  pasteSmellsLikeFiles,
 } from "../../lib/editorMarkdown";
+import {
+  clipboardFilesToContent,
+  clipboardPasteRoute,
+  type ClipboardFile,
+  type ResolvedClipboardFile,
+} from "../../lib/clipboardPaste";
+import {
+  addClipboardPastePlaceholder,
+  ClipboardPastePlaceholder,
+  findClipboardPasteRange,
+  removeClipboardPastePlaceholder,
+} from "../../lib/clipboardPastePlaceholder";
 import { Frontmatter } from "./Frontmatter";
 import { BlockMathEditor } from "./BlockMathEditor";
 import { LinkEditor } from "./LinkEditor";
@@ -92,6 +103,7 @@ import {
   exportTypesetPdf,
 } from "../../services/pdf";
 import type { Settings } from "../../types/note";
+
 import {
   BoldIcon,
   ItalicIcon,
@@ -664,15 +676,22 @@ export function Editor({
     async (
       command: "save_clipboard_image" | "copy_image_to_assets",
       payload: Record<string, unknown>,
+      fixedTarget?: { targetDir: string | null; docStem: string | null },
     ): Promise<string> => {
-      const targetDir = previewMode
-        ? parentDirectory(previewMode.filePath)
-        : null;
+      const targetDir = fixedTarget
+        ? fixedTarget.targetDir
+        : previewMode
+          ? parentDirectory(previewMode.filePath)
+          : null;
       const docPath = docPathRef.current;
       const relativePath = await invoke<string>(command, {
         ...payload,
         targetDir,
-        docStem: docPath ? fileStem(docPath) : null,
+        docStem: fixedTarget
+          ? fixedTarget.docStem
+          : docPath
+            ? fileStem(docPath)
+            : null,
       });
       const baseDir = targetDir ?? (await invoke<string>("get_notes_folder"));
       const absolutePath = await join(baseDir, relativePath);
@@ -1299,6 +1318,7 @@ export function Editor({
         inline: false,
         allowBase64: false,
       }),
+      ClipboardPastePlaceholder,
       TaskList,
       TaskItem.configure({
         nested: true,
@@ -1383,11 +1403,142 @@ export function Editor({
         const clipboardData = event.clipboardData;
         if (!clipboardData) return false;
 
-        // Check for images first
+        // Copied files can also appear as image blobs. Prefer their native paths
+        // so mixed selections stay intact and images keep their original files.
+        const pastedText = clipboardData.getData("text/plain");
         const items = Array.from(clipboardData.items);
         const imageItem = items.find((item) => item.type.startsWith("image/"));
+        const pasteRoute = clipboardPasteRoute(
+          clipboardData.types,
+          pastedText,
+          Boolean(imageItem),
+        );
+        if (pasteRoute === "files") {
+          const targetEditor = editorRef.current;
+          if (!targetEditor) return false;
+          const targetDocument = docPathRef.current;
+          const fixedTarget = {
+            targetDir: previewMode
+              ? parentDirectory(previewMode.filePath)
+              : null,
+            docStem: targetDocument ? fileStem(targetDocument) : null,
+          };
+          const notesFolderPromise = previewMode
+            ? null
+            : invoke<string>("get_notes_folder")
+                .then((path) => ({ ok: true as const, path }))
+                .catch((error: unknown) => ({ ok: false as const, error }));
+          const placeholderId = {};
+          const placeholderRange = {
+            from: targetEditor.state.selection.from,
+            to: targetEditor.state.selection.to,
+          };
+          targetEditor.view.dispatch(
+            addClipboardPastePlaceholder(
+              targetEditor.state.tr,
+              placeholderId,
+              placeholderRange,
+            ),
+          );
 
-        if (imageItem) {
+          (async () => {
+            const pasteIsStale = () =>
+              targetEditor.isDestroyed ||
+              editorRef.current !== targetEditor ||
+              docPathRef.current !== targetDocument;
+            const removePlaceholder = () => {
+              if (targetEditor.isDestroyed) return;
+              targetEditor.view.dispatch(
+                removeClipboardPastePlaceholder(
+                  targetEditor.state.tr,
+                  placeholderId,
+                ),
+              );
+            };
+            const insertAtPlaceholder = (
+              content: Parameters<
+                typeof targetEditor.commands.insertContentAt
+              >[1],
+            ) => {
+              if (pasteIsStale()) {
+                removePlaceholder();
+                return;
+              }
+              const range = findClipboardPasteRange(
+                targetEditor.state,
+                placeholderId,
+              );
+              if (range === null) {
+                removePlaceholder();
+                return;
+              }
+              targetEditor
+                .chain()
+                .insertContentAt(range, content, { updateSelection: false })
+                .command(({ tr }) => {
+                  removeClipboardPastePlaceholder(tr, placeholderId);
+                  return true;
+                })
+                .run();
+            };
+
+            let files: ClipboardFile[] = [];
+            try {
+              files = await invoke<ClipboardFile[]>("clipboard_files");
+            } catch (error) {
+              console.error("Failed to read clipboard files:", error);
+            }
+            if (files.length === 0) {
+              if (pastedText) {
+                insertAtPlaceholder({ type: "text", text: pastedText });
+              } else {
+                removePlaceholder();
+              }
+              return;
+            }
+
+            if (files.some((file) => file.isImage) && notesFolderPromise) {
+              const notesFolder = await notesFolderPromise;
+              if (!notesFolder.ok) {
+                console.error("Failed to resolve image target:", notesFolder.error);
+                toast.error("Failed to resolve image target");
+                removePlaceholder();
+                return;
+              }
+              fixedTarget.targetDir = notesFolder.path;
+            }
+
+            const resolvedFiles: ResolvedClipboardFile[] = [];
+            for (const file of files) {
+              if (pasteIsStale()) {
+                removePlaceholder();
+                return;
+              }
+              if (!file.isImage) {
+                resolvedFiles.push(file);
+                continue;
+              }
+              try {
+                const assetUrl = await importImageAsset(
+                  "copy_image_to_assets",
+                  { sourcePath: file.path },
+                  fixedTarget,
+                );
+                resolvedFiles.push({ ...file, assetUrl });
+              } catch (error) {
+                console.error("Failed to paste image file:", error);
+                toast.error(`Failed to paste image: ${error}`);
+              }
+            }
+
+            const content = clipboardFilesToContent(resolvedFiles);
+            if (content.length > 0) insertAtPlaceholder(content);
+            else removePlaceholder();
+          })();
+          return true; // Handled
+        }
+
+        if (pasteRoute === "bitmap" && imageItem) {
           const blob = imageItem.getAsFile();
           if (blob) {
             // Convert blob to base64 and handle async operations
@@ -1419,47 +1570,6 @@ export function Editor({
             reader.readAsDataURL(blob);
             return true; // Handled
           }
-        }
-
-        // A copied file reaches the DOM in webview-specific shapes (path text
-        // on WebKitGTK); the backend reads the OS clipboard authoritatively.
-        const pastedText = clipboardData.getData("text/plain");
-        if (pasteSmellsLikeFiles(clipboardData.types, pastedText)) {
-          (async () => {
-            let images: string[] = [];
-            try {
-              images = await invoke<string[]>("clipboard_image_files");
-            } catch (error) {
-              console.error("Failed to read clipboard files:", error);
-            }
-            if (images.length === 0) {
-              if (pastedText) {
-                editorRef.current
-                  ?.chain()
-                  .focus()
-                  .insertContent({ type: "text", text: pastedText })
-                  .run();
-              }
-              return;
-            }
-            for (const sourcePath of images) {
-              try {
-                const assetUrl = await importImageAsset(
-                  "copy_image_to_assets",
-                  { sourcePath },
-                );
-                editorRef.current
-                  ?.chain()
-                  .focus()
-                  .setImage({ src: assetUrl })
-                  .run();
-              } catch (error) {
-                console.error("Failed to paste image file:", error);
-                toast.error(`Failed to paste image: ${error}`);
-              }
-            }
-          })();
-          return true; // Handled
         }
 
         // Handle markdown text paste

@@ -111,13 +111,14 @@ harmless (collisions inside get `-1` suffixes) and no GC runs in the notes folde
 
 Pasting a copied image *file* (as opposed to bitmap data) reaches the DOM in
 webview-specific shapes — WebKitGTK hands the page only the path as text — so the DOM
-is not where file pastes are detected. The backend command `clipboard_image_files`
-reads the OS clipboard directly (GTK clipboard on Linux, `clipboard-win` on Windows,
-NSPasteboard on macOS) and returns the local image files it holds. The paste handler's
-shared flow on all platforms: bitmap items → save as screenshot; paste that smells like
-files (`pasteSmellsLikeFiles`: a Files/uri-list type, or all-path text) → ask the
-backend and import each returned file via `copy_image_to_assets`, falling back to plain
-text insertion when the backend finds none; otherwise the normal text/markdown path.
+is not where file pastes are detected. The backend command `clipboard_files` reads the
+OS clipboard directly (GTK clipboard on Linux, `clipboard-win` on Windows, NSPasteboard
+on macOS) and returns each local filesystem entry with its content-based image
+classification. The paste handler's shared flow on all platforms: paste that smells
+like files (`pasteSmellsLikeFiles`: a Files/uri-list type, or all-path text) → ask the
+backend, import image entries via `copy_image_to_assets`, and insert non-image paths as
+plain text; when the backend finds no files, fall back to the DOM's plain text. Otherwise,
+bitmap items → save as screenshot; all other pastes use the normal text/markdown path.
 
 Image classification is by file content (`sniff_image`: magic bytes via `infer`, plus
 an XML sniff for SVG), not by extension — `copy_image_to_assets` uses the same
