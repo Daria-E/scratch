@@ -1,19 +1,24 @@
 import { useEffect, useRef, useState } from "react";
+import katex from "katex";
 import { CheckIcon, XIcon } from "../icons";
 import { IconButton } from "../ui";
+import { katexMacros } from "./MathExtensions";
 
-export interface BlockMathEditorProps {
+export interface MathEditorPopupProps {
   initialLatex: string;
+  displayMode: boolean;
   onSubmit: (latex: string) => void;
   onCancel: () => void;
 }
 
-export const BlockMathEditor = ({
+export const MathEditorPopup = ({
   initialLatex,
+  displayMode,
   onSubmit,
   onCancel,
-}: BlockMathEditorProps) => {
+}: MathEditorPopupProps) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
   const [latex, setLatex] = useState(initialLatex);
 
   useEffect(() => {
@@ -22,6 +27,34 @@ export const BlockMathEditor = ({
       textareaRef.current?.select();
     });
   }, []);
+
+  useEffect(() => {
+    const preview = previewRef.current;
+    if (!preview) return;
+
+    preview.replaceChildren();
+    if (!latex.trim()) {
+      const placeholder = document.createElement("span");
+      placeholder.className = "text-xs text-text-muted";
+      placeholder.textContent = "Preview";
+      preview.appendChild(placeholder);
+      return;
+    }
+
+    try {
+      katex.render(latex, preview, {
+        throwOnError: false,
+        displayMode,
+        macros: katexMacros,
+      });
+    } catch {
+      preview.replaceChildren();
+      const error = document.createElement("span");
+      error.className = "text-xs text-text-muted";
+      error.textContent = "Invalid LaTeX";
+      preview.appendChild(error);
+    }
+  }, [displayMode, latex]);
 
   const handleSubmit = () => {
     onSubmit(latex);
@@ -48,6 +81,11 @@ export const BlockMathEditor = ({
         onKeyDown={handleKeyDown}
         placeholder="Enter KaTeX expression..."
         className="w-full h-30 resize-y rounded-md border border-border bg-bg px-2.5 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent/40"
+      />
+      <div
+        ref={previewRef}
+        dir="ltr"
+        className="flex min-h-16 max-h-40 items-center justify-center overflow-auto rounded-md border border-border bg-bg-muted px-3 py-2 text-text"
       />
       <div className="flex items-center justify-end gap-1 mr-0.5 mb-0.5">
         <IconButton

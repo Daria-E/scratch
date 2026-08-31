@@ -94,7 +94,7 @@ import {
   removeClipboardPastePlaceholder,
 } from "../../lib/clipboardPastePlaceholder";
 import { Frontmatter } from "./Frontmatter";
-import { BlockMathEditor } from "./BlockMathEditor";
+import { MathEditorPopup } from "./MathEditorPopup";
 import { LinkEditor } from "./LinkEditor";
 import { SearchToolbar } from "./SearchToolbar";
 import { SlashCommand } from "./SlashCommand";
@@ -104,6 +104,7 @@ import { EditorWidthHandles } from "./EditorWidthHandle";
 import {
   ScratchBlockMath,
   ScratchInlineMath,
+  katexMacros,
   normalizeBlockMath,
   normalizeInlineMath,
 } from "./MathExtensions";
@@ -272,15 +273,6 @@ function mathNodeAtSelection(state: EditorState): MathNodeTarget | null {
 
 const CARET_SCROLL_THRESHOLD_PX = 24;
 const CARET_SCROLL_MARGIN_PX = 72;
-
-// Standard number-field shortcuts for KaTeX (shared between inline and block math)
-const katexMacros: Record<string, string> = {
-  "\\R": "\\mathbb{R}",
-  "\\N": "\\mathbb{N}",
-  "\\Z": "\\mathbb{Z}",
-  "\\Q": "\\mathbb{Q}",
-  "\\C": "\\mathbb{C}",
-};
 
 // Search highlight extension - adds yellow backgrounds to search matches
 const searchHighlightPluginKey = new PluginKey("searchHighlight");
@@ -1086,7 +1078,8 @@ export function Editor({
   const openMathPopup = useCallback(
     (
       currentEditor: TiptapEditor,
-      anchorRect: DOMRect,
+      getAnchorRect: () => DOMRect,
+      displayMode: boolean,
       initialLatex: string,
       onSubmit: (latex: string) => void,
       onCancel: () => void,
@@ -1097,17 +1090,28 @@ export function Editor({
       }
       closeMathPopup();
 
-      const component = new ReactRenderer(BlockMathEditor, {
+      const component = new ReactRenderer(MathEditorPopup, {
         props: {
           initialLatex,
+          displayMode,
           onSubmit,
           onCancel,
         },
         editor: currentEditor,
       });
 
+      const updatePosition = () => {
+        mathPopupRef.current?.popperInstance?.update();
+      };
+      const scrollContainer = scrollContainerRef.current;
+      scrollContainer?.addEventListener("scroll", updatePosition, {
+        passive: true,
+        capture: true,
+      });
+      window.addEventListener("resize", updatePosition);
+
       mathPopupRef.current = tippy(document.body, {
-        getReferenceClientRect: () => anchorRect,
+        getReferenceClientRect: getAnchorRect,
         appendTo: () => document.body,
         content: component.element,
         showOnCreate: true,
@@ -1116,6 +1120,8 @@ export function Editor({
         placement: "bottom-start",
         offset: [0, 8],
         onDestroy: () => {
+          scrollContainer?.removeEventListener("scroll", updatePosition, true);
+          window.removeEventListener("resize", updatePosition);
           component.destroy();
           mathPopupRef.current = null;
         },
@@ -1134,10 +1140,10 @@ export function Editor({
         return;
       }
 
-      const anchorRect = getMathNodeRect(currentEditor, pos, node);
       openMathPopup(
         currentEditor,
-        anchorRect,
+        () => getMathNodeRect(currentEditor, pos, node),
+        true,
         String(node.attrs.latex ?? ""),
         (latex: string) => {
           const trimmed = latex.trim();
@@ -1179,10 +1185,10 @@ export function Editor({
         return;
       }
 
-      const anchorRect = getMathNodeRect(currentEditor, pos, node);
       openMathPopup(
         currentEditor,
-        anchorRect,
+        () => getMathNodeRect(currentEditor, pos, node),
+        false,
         String(node.attrs.latex ?? ""),
         (latex: string) => {
           const trimmed = latex.trim();
@@ -1235,42 +1241,41 @@ export function Editor({
     const targetRange = { from, to };
     const hasSelection = from !== to;
 
-    const anchorRect = {
-      getBoundingClientRect: () => {
-        if (hasSelection) {
-          const startPos = currentEditor.view.domAtPos(from);
-          const endPos = currentEditor.view.domAtPos(to);
+    const getAnchorRect = () => {
+      if (hasSelection) {
+        const startPos = currentEditor.view.domAtPos(from);
+        const endPos = currentEditor.view.domAtPos(to);
 
-          if (startPos && endPos) {
-            try {
-              const range = document.createRange();
-              range.setStart(startPos.node, startPos.offset);
-              range.setEnd(endPos.node, endPos.offset);
-              return range.getBoundingClientRect();
-            } catch (error) {
-              console.error("Block math range creation failed:", error);
-            }
+        if (startPos && endPos) {
+          try {
+            const range = document.createRange();
+            range.setStart(startPos.node, startPos.offset);
+            range.setEnd(endPos.node, endPos.offset);
+            return range.getBoundingClientRect();
+          } catch (error) {
+            console.error("Block math range creation failed:", error);
           }
         }
+      }
 
-        const coords = currentEditor.view.coordsAtPos(from);
-        return {
-          width: 2,
-          height: 20,
-          top: coords.top,
-          left: coords.left,
-          right: coords.right,
-          bottom: coords.bottom,
-          x: coords.left,
-          y: coords.top,
-          toJSON: () => ({}),
-        } as DOMRect;
-      },
+      const coords = currentEditor.view.coordsAtPos(from);
+      return {
+        width: 2,
+        height: 20,
+        top: coords.top,
+        left: coords.left,
+        right: coords.right,
+        bottom: coords.bottom,
+        x: coords.left,
+        y: coords.top,
+        toJSON: () => ({}),
+      } as DOMRect;
     };
 
     openMathPopup(
       currentEditor,
-      anchorRect.getBoundingClientRect() as DOMRect,
+      getAnchorRect,
+      true,
       initialLatex,
       (latex: string) => {
         const normalizedLatex = latex.trim();
@@ -1358,42 +1363,41 @@ export function Editor({
     const targetRange = { from, to };
     const hasSelection = from !== to;
 
-    const anchorRect = {
-      getBoundingClientRect: () => {
-        if (hasSelection) {
-          const startPos = currentEditor.view.domAtPos(from);
-          const endPos = currentEditor.view.domAtPos(to);
+    const getAnchorRect = () => {
+      if (hasSelection) {
+        const startPos = currentEditor.view.domAtPos(from);
+        const endPos = currentEditor.view.domAtPos(to);
 
-          if (startPos && endPos) {
-            try {
-              const range = document.createRange();
-              range.setStart(startPos.node, startPos.offset);
-              range.setEnd(endPos.node, endPos.offset);
-              return range.getBoundingClientRect();
-            } catch (error) {
-              console.error("Inline math range creation failed:", error);
-            }
+        if (startPos && endPos) {
+          try {
+            const range = document.createRange();
+            range.setStart(startPos.node, startPos.offset);
+            range.setEnd(endPos.node, endPos.offset);
+            return range.getBoundingClientRect();
+          } catch (error) {
+            console.error("Inline math range creation failed:", error);
           }
         }
+      }
 
-        const coords = currentEditor.view.coordsAtPos(from);
-        return {
-          width: 2,
-          height: 20,
-          top: coords.top,
-          left: coords.left,
-          right: coords.right,
-          bottom: coords.bottom,
-          x: coords.left,
-          y: coords.top,
-          toJSON: () => ({}),
-        } as DOMRect;
-      },
+      const coords = currentEditor.view.coordsAtPos(from);
+      return {
+        width: 2,
+        height: 20,
+        top: coords.top,
+        left: coords.left,
+        right: coords.right,
+        bottom: coords.bottom,
+        x: coords.left,
+        y: coords.top,
+        toJSON: () => ({}),
+      } as DOMRect;
     };
 
     openMathPopup(
       currentEditor,
-      anchorRect.getBoundingClientRect() as DOMRect,
+      getAnchorRect,
+      false,
       initialLatex,
       (latex: string) => {
         const normalizedLatex = latex.trim();

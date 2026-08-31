@@ -3,6 +3,15 @@ import { BlockMath, InlineMath } from "@tiptap/extension-mathematics";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { NodeSelection, Plugin, PluginKey } from "@tiptap/pm/state";
 
+// Standard number-field shortcuts for KaTeX (shared by nodes and the popup).
+export const katexMacros: Record<string, string> = {
+  "\\R": "\\mathbb{R}",
+  "\\N": "\\mathbb{N}",
+  "\\Z": "\\mathbb{Z}",
+  "\\Q": "\\mathbb{Q}",
+  "\\C": "\\mathbb{C}",
+};
+
 export function normalizeBlockMath(value: string): string {
   const trimmed = value.trim();
   const match = trimmed.match(/^\$\$([\s\S]*?)\$\$$/);
