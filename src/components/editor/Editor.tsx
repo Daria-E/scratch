@@ -214,6 +214,9 @@ function getMathNodeRect(
   } as DOMRect;
 }
 
+const CARET_SCROLL_THRESHOLD_PX = 24;
+const CARET_SCROLL_MARGIN_PX = 72;
+
 // Standard number-field shortcuts for KaTeX (shared between inline and block math)
 const katexMacros: Record<string, string> = {
   "\\R": "\\mathbb{R}",
@@ -621,6 +624,7 @@ export function Editor({
 
   const createNote = notesCtx?.createNote;
   const consumePendingNewNote = notesCtx?.consumePendingNewNote;
+  const consumeNoteRename = notesCtx?.consumeNoteRename;
   const hasExternalChanges = previewMode
     ? previewMode.hasExternalChanges
     : notesCtx!.hasExternalChanges;
@@ -1500,6 +1504,8 @@ export function Editor({
       }),
     ],
     editorProps: {
+      scrollThreshold: CARET_SCROLL_THRESHOLD_PX,
+      scrollMargin: CARET_SCROLL_MARGIN_PX,
       attributes: {
         class:
           "prose prose-lg dark:prose-invert max-w-3xl mx-auto focus:outline-none min-h-full px-6 pt-8 pb-24",
@@ -1974,10 +1980,14 @@ export function Editor({
     // When a save renames the file (title changed), the ID changes but we're still
     // editing the same note. Update loadedNoteIdRef first so any flush uses the new ID.
     if (!isSameNote) {
+      const renamedTo = consumeNoteRename?.(
+        loadedNoteIdRef.current ?? "",
+      );
       const lastSave = lastSaveRef.current;
       if (
-        lastSave?.noteId === loadedNoteIdRef.current &&
-        lastSave?.content === currentNote.content
+        renamedTo === currentNote.id ||
+        (lastSave?.noteId === loadedNoteIdRef.current &&
+          lastSave?.content === currentNote.content)
       ) {
         loadedNoteIdRef.current = currentNote.id;
         loadedModifiedRef.current = currentNote.modified;
@@ -2114,6 +2124,7 @@ export function Editor({
     flushPendingSave,
     reloadVersion,
     consumePendingNewNote,
+    consumeNoteRename,
     syncPendingIndicator,
   ]);
 

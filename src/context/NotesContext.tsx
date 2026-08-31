@@ -34,6 +34,7 @@ interface NotesActionsContextValue {
   selectNote: (id: string) => Promise<void>;
   createNote: () => Promise<void>;
   consumePendingNewNote: (id: string) => boolean;
+  consumeNoteRename: (fromId: string) => string | null;
   saveNote: (content: string, noteId?: string) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
   duplicateNote: (id: string) => Promise<void>;
@@ -86,6 +87,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
   const searchRequestIdRef = useRef(0);
   // Tracks the ID of a newly created note so Editor can focus its title.
   const pendingNewNoteIdRef = useRef<string | null>(null);
+  const lastRenameRef = useRef<{ from: string; to: string } | null>(null);
 
   const refreshNotes = useCallback(async () => {
     if (!notesFolder) return;
@@ -185,6 +187,13 @@ export function NotesProvider({ children }: { children: ReactNode }) {
     return true;
   }, []);
 
+  const consumeNoteRename = useCallback((fromId: string) => {
+    if (lastRenameRef.current?.from !== fromId) return null;
+    const to = lastRenameRef.current.to;
+    lastRenameRef.current = null;
+    return to;
+  }, []);
+
   const saveNote = useCallback(
     async (content: string, noteId?: string) => {
       // Use provided noteId (for flush saves) or fall back to currentNote.id
@@ -201,6 +210,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
 
         // If the note was renamed (ID changed), also mark the new ID
         if (updated.id !== savingNoteId) {
+          lastRenameRef.current = { from: savingNoteId, to: updated.id };
           recentlySavedRef.current.add(updated.id);
 
           // Transfer pin status to new ID
@@ -716,6 +726,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       selectNote,
       createNote,
       consumePendingNewNote,
+      consumeNoteRename,
       saveNote,
       deleteNote,
       duplicateNote,
@@ -738,6 +749,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       selectNote,
       createNote,
       consumePendingNewNote,
+      consumeNoteRename,
       saveNote,
       deleteNote,
       duplicateNote,
