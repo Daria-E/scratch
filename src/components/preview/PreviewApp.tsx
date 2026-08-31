@@ -413,7 +413,6 @@ export function PreviewApp({
         return;
       }
 
-      // Cmd+S: drafts need a destination; saved files autosave already
       if (modKey && !e.shiftKey && keyIs(e, "s")) {
         e.preventDefault();
         if (isDraft !== false) {
@@ -422,7 +421,13 @@ export function PreviewApp({
             toast.error("Failed to save");
           });
         } else {
-          toast.success("Saved");
+          const controller = documentControllerRef.current;
+          if (controller?.contentLoaded()) {
+            controller.flush().catch((error) => {
+              console.error("Failed to save document:", error);
+              toast.error("Failed to save");
+            });
+          }
         }
         return;
       }

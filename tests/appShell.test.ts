@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import type { ReactElement } from "react";
 
+import { CircleDotIcon } from "../src/components/icons";
 import {
   resolveEditorWindowState,
   resolveLeaveNotesCommand,
@@ -261,6 +263,29 @@ test("interface zoom clears legacy CSS zoom before applying native webview zoom"
   await applyInterfaceZoom(0.85, root, webview);
 
   assert.deepEqual(events, ["clear-css:zoom", "native-zoom:0.85"]);
+});
+
+test("dirty save status renders a filled center dot inside its outline", () => {
+  const icon = CircleDotIcon({ className: "dirty-marker" });
+  const children = icon.props.children as ReactElement<{
+    d?: string;
+    cx?: string;
+    cy?: string;
+    r?: string;
+    fill?: string;
+  }>[];
+  const outline = children.find(
+    (child) =>
+      child.type === "path" &&
+      child.props.d === "M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0",
+  );
+  const dot = children.find((child) => child.type === "circle");
+
+  assert.equal(outline?.props.d, "M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0");
+  assert.equal(dot?.props.cx, "12");
+  assert.equal(dot?.props.cy, "12");
+  assert.equal(dot?.props.r, "1.5");
+  assert.equal(dot?.props.fill, "currentColor");
 });
 
 test("every popup menu is constrained to the window viewport", () => {

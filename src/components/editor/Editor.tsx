@@ -132,6 +132,7 @@ import {
   TableIcon,
   SpinnerIcon,
   CircleCheckIcon,
+  CircleDotIcon,
   CopyIcon,
   DownloadIcon,
   ShareIcon,
@@ -635,6 +636,7 @@ export function Editor({
     ? parentDirectory(previewMode.filePath)
     : (notesCtx?.notesFolder ?? null);
   const [isSaving, setIsSaving] = useState(false);
+  const [hasPendingChanges, setHasPendingChanges] = useState(false);
   const [saveQueue] = useState(() => new DocumentSaveQueue());
   // Force re-render when selection changes to update toolbar active states
   const [, setSelectionKey] = useState(0);
@@ -683,6 +685,11 @@ export function Editor({
   const currentNoteIdRef = useRef<string | null>(null);
   // Track if we need to save (use ref to avoid computing markdown on every keystroke)
   const needsSaveRef = useRef(false);
+  const syncPendingIndicator = useCallback(() => {
+    setHasPendingChanges(
+      needsSaveRef.current || sourceNeedsSaveRef.current,
+    );
+  }, []);
 
   sourceModeRef.current = sourceMode;
   sourceContentRef.current = sourceContent;
@@ -885,10 +892,11 @@ export function Editor({
           }
           throw error;
         } finally {
+          syncPendingIndicator();
           setIsSaving(false);
         }
       }),
-    [saveNote, saveQueue],
+    [saveNote, saveQueue, syncPendingIndicator],
   );
 
   // Flush any pending save immediately (saves to the note currently loaded in editor)
@@ -918,9 +926,11 @@ export function Editor({
         if (hadRichChanges) needsSaveRef.current = true;
         if (hadSourceChanges) sourceNeedsSaveRef.current = true;
         throw error;
+      } finally {
+        syncPendingIndicator();
       }
     }
-  }, [getCurrentDocumentContent, saveImmediately]);
+  }, [getCurrentDocumentContent, saveImmediately, syncPendingIndicator]);
 
   const flushCurrentDocument = useCallback(async (): Promise<string> => {
     if (saveTimeoutRef.current) {
@@ -944,9 +954,11 @@ export function Editor({
       if (sourceModeRef.current) sourceNeedsSaveRef.current = true;
       else needsSaveRef.current = true;
       throw error;
+    } finally {
+      syncPendingIndicator();
     }
     return content;
-  }, [getCurrentDocumentContent, saveImmediately]);
+  }, [getCurrentDocumentContent, saveImmediately, syncPendingIndicator]);
 
   // Schedule a debounced save (markdown computed only when timer fires)
   const scheduleSave = useCallback(() => {
@@ -957,7 +969,12 @@ export function Editor({
     const savingNoteId = currentNote?.id;
     if (!savingNoteId) return;
 
-    needsSaveRef.current = true;
+    if (!needsSaveRef.current && !sourceNeedsSaveRef.current) {
+      needsSaveRef.current = true;
+      syncPendingIndicator();
+    } else {
+      needsSaveRef.current = true;
+    }
 
     saveTimeoutRef.current = window.setTimeout(async () => {
       if (currentNoteIdRef.current !== savingNoteId || !needsSaveRef.current) {
@@ -972,12 +989,18 @@ export function Editor({
           await saveImmediately(savingNoteId, content);
         } catch (error) {
           needsSaveRef.current = true;
+          syncPendingIndicator();
           console.error("Failed to save note:", error);
           toast.error("Failed to save note");
         }
       }
     }, 500);
-  }, [saveImmediately, getCurrentDocumentContent, currentNote?.id]);
+  }, [
+    saveImmediately,
+    getCurrentDocumentContent,
+    currentNote?.id,
+    syncPendingIndicator,
+  ]);
 
   const closeMathPopup = useCallback(() => {
     if (mathPopupRef.current) {
@@ -2043,6 +2066,7 @@ export function Editor({
     } else {
       editor.commands.setContent(installContent);
     }
+    syncPendingIndicator();
 
     // Scroll to top after content is set (must be after setContent to work reliably)
     scrollContainerRef.current?.scrollTo(0, 0);
@@ -2085,6 +2109,7 @@ export function Editor({
     flushPendingSave,
     reloadVersion,
     consumePendingNewNote,
+    syncPendingIndicator,
   ]);
 
   // Scroll to top on mount (e.g., when returning from settings)
@@ -2678,7 +2703,12 @@ export function Editor({
     (value: string) => {
       sourceContentRef.current = value;
       setSourceContent(value);
-      sourceNeedsSaveRef.current = true;
+      if (!needsSaveRef.current && !sourceNeedsSaveRef.current) {
+        sourceNeedsSaveRef.current = true;
+        syncPendingIndicator();
+      } else {
+        sourceNeedsSaveRef.current = true;
+      }
       onDocumentEmptyChange?.(value.trim() === "");
       if (sourceTimeoutRef.current) {
         clearTimeout(sourceTimeoutRef.current);
@@ -2695,11 +2725,18 @@ export function Editor({
             sourceNeedsSaveRef.current = true;
             console.error("Failed to save note:", error);
             toast.error("Failed to save note");
+          } finally {
+            syncPendingIndicator();
           }
         }
       }, 300);
     },
-    [currentNote, onDocumentEmptyChange, saveImmediately],
+    [
+      currentNote,
+      onDocumentEmptyChange,
+      saveImmediately,
+      syncPendingIndicator,
+    ],
   );
 
   if (!currentNote) {
@@ -2840,6 +2877,12 @@ export function Editor({
             <Tooltip content="Saving...">
               <div className="h-7 w-7 flex items-center justify-center">
                 <SpinnerIcon className="w-4.5 h-4.5 text-text-muted/40 stroke-[1.5] animate-spin" />
+              </div>
+            </Tooltip>
+          ) : hasPendingChanges ? (
+            <Tooltip content="Unsaved changes">
+              <div className="h-7 w-7 flex items-center justify-center">
+                <CircleDotIcon className="w-4.5 h-4.5 mt-px stroke-[1.5] text-text-muted/40" />
               </div>
             </Tooltip>
           ) : (
