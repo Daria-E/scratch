@@ -508,6 +508,7 @@ export interface PreviewModeData {
 export interface EditorDocumentController {
   isEmpty(): boolean;
   flush(): Promise<string>;
+  contentLoaded(): boolean;
 }
 
 interface EditorProps {
@@ -1744,15 +1745,19 @@ export function Editor({
     flush: async () => {
       throw new Error("Document is not ready to save");
     },
+    contentLoaded: () => false,
   });
   documentControllerHandlersRef.current = {
     isEmpty: getCurrentDocumentIsEmpty,
     flush: flushCurrentDocument,
+    contentLoaded: () => loadedNoteIdRef.current !== null,
   };
   const documentController = useMemo<EditorDocumentController>(
     () => ({
       isEmpty: () => documentControllerHandlersRef.current.isEmpty(),
       flush: () => documentControllerHandlersRef.current.flush(),
+      contentLoaded: () =>
+        documentControllerHandlersRef.current.contentLoaded(),
     }),
     [],
   );

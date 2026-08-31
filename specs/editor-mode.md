@@ -84,7 +84,9 @@ autosave path (300 ms, `save_file_direct`) works unchanged and nothing is lost t
 
 - The window titles it "Untitled" and shows no path.
 - `mod+S` in a draft opens a save dialog and moves the draft to the chosen location; the
-  window then targets the new path and the file enters recents.
+  window then targets the new path and the file enters recents. Save-as flushes the live
+  editor buffer to the draft before moving it, so the saved file always matches the
+  screen.
 
 Draft buffers are ephemeral (decision 2026-08-27, superseding "drafts persist across
 sessions"): the draft file exists for crash safety, not as a document store. Abandoning

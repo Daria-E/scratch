@@ -18,6 +18,10 @@ import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { isDraftPath } from "../../services/notes";
 import { saveDocumentToFolder } from "../../lib/saveToFolder";
 import {
+  resolveDraftEmptiness,
+  saveDraftDocumentAs,
+} from "../../lib/draftLifecycle";
+import {
   AlertDialog,
   AlertDialogContent,
   AlertDialogHeader,
@@ -182,40 +186,60 @@ export function PreviewApp({
   }, []);
 
   const saveAs = useCallback(async (): Promise<string | null> => {
-    const target = await saveDialog({
-      defaultPath: "untitled.md",
-      filters: [{ name: "Markdown", extensions: ["md"] }],
-    });
-    if (!target) return null;
-
+    if (savingRef.current) return null;
+    savingRef.current = true;
+    setIsSaving(true);
     try {
-      const failedAssets = await filesService.saveDraftAs(filePath, target);
-      setFilePath(target);
-      if (failedAssets.length > 0) {
+      const controller = documentControllerRef.current;
+      const result = await saveDraftDocumentAs({
+        pickTarget: () =>
+          saveDialog({
+            defaultPath: "untitled.md",
+            filters: [{ name: "Markdown", extensions: ["md"] }],
+          }),
+        flushDocument: controller?.contentLoaded()
+          ? async () => {
+              await controller.flush();
+            }
+          : null,
+        persistDraft: (target) => filesService.saveDraftAs(filePath, target),
+        markDraftRetired: () => {
+          discardedPathsRef.current.add(filePath);
+        },
+        adoptTarget: setFilePath,
+      });
+      if (result.outcome === "cancelled") return null;
+      if (result.failedAssets.length > 0) {
         toast.warning(
-          `Saved, but some images could not be copied: ${failedAssets.join(", ")}`
+          `Saved, but some images could not be copied: ${result.failedAssets.join(", ")}`
         );
       } else {
         toast.success("Saved");
       }
-      return target;
+      return result.target;
     } catch (error) {
       console.error("Failed to save document:", error);
       toast.error(typeof error === "string" ? error : "Failed to save");
       return null;
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
     }
   }, [filePath]);
 
-  const draftIsEmpty = useCallback(async (path: string): Promise<boolean> => {
-    const controller = documentControllerRef.current;
-    if (controller) return controller.isEmpty();
-    // Editor unmounted (settings view): its unmount flush made the file current
-    try {
-      return (await filesService.readFileDirect(path)).content.trim() === "";
-    } catch {
-      return true;
-    }
-  }, []);
+  const draftIsEmpty = useCallback(
+    (path: string): Promise<boolean> =>
+      resolveDraftEmptiness(documentControllerRef.current, async () => {
+        try {
+          return (
+            (await filesService.readFileDirect(path)).content.trim() === ""
+          );
+        } catch {
+          return true;
+        }
+      }),
+    [],
+  );
 
   const confirmAbandonDraft =
     useCallback(async (): Promise<AbandonOutcome> => {
@@ -434,7 +458,7 @@ export function PreviewApp({
   const handleSaveToFolder = useCallback(async () => {
     if (savingRef.current) return;
     const controller = documentControllerRef.current;
-    if (!controller) {
+    if (!controller || !controller.contentLoaded()) {
       toast.error("Document is not ready to save");
       return;
     }

@@ -32,3 +32,4 @@ src-tauri/gen/
 
 # Release artifacts
 latest.json
+000*
