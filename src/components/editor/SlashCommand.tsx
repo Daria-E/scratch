@@ -17,6 +17,7 @@ import {
   QuoteIcon,
   CodeIcon,
   BlockMathIcon,
+  InlineMathIcon,
   SeparatorIcon,
   ImageIcon,
   TableIcon,
@@ -146,7 +147,7 @@ const SLASH_COMMANDS: SlashCommandItem[] = [
   {
     title: "Inline Math",
     description: "Inline math expression",
-    icon: <BlockMathIcon />,
+    icon: <InlineMathIcon />,
     aliases: ["inline math", "latex"],
     command: (editor) => {
       editor.chain().focus().run();

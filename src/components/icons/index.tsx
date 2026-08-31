@@ -434,6 +434,24 @@ export function BlockMathIcon({ className = "w-4.5 h-4.5" }: IconProps) {
   );
 }
 
+export function InlineMathIcon({ className = "w-4.5 h-4.5" }: IconProps) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 12h3l2.5 6L13 6h8" />
+      <path d="M15 11l5 6" />
+      <path d="M20 11l-5 6" />
+    </svg>
+  );
+}
+
 export function SeparatorIcon({ className = "w-4.5 h-4.5" }: IconProps) {
   return (
     <svg

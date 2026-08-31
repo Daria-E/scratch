@@ -48,6 +48,8 @@ import {
 } from "../../lib/editorDocument";
 import { exportFileStem } from "../../lib/exportFilename";
 import {
+  blockMathShortcutLabel,
+  inlineMathShortcutLabel,
   mathShortcutAction,
   type MathShortcutAction,
 } from "../../lib/mathShortcuts";
@@ -131,6 +133,7 @@ import {
   CodeIcon,
   InlineCodeIcon,
   BlockMathIcon,
+  InlineMathIcon,
   SeparatorIcon,
   LinkIcon,
   BracketsIcon,
@@ -368,6 +371,7 @@ interface FormatBarProps {
   editor: TiptapEditor | null;
   onAddLink: () => void;
   onAddBlockMath: () => void;
+  onAddInlineMath: () => void;
   onAddImage: () => void;
 }
 
@@ -377,6 +381,7 @@ function FormatBar({
   editor,
   onAddLink,
   onAddBlockMath,
+  onAddInlineMath,
   onAddImage,
 }: FormatBarProps) {
   const [tableMenuOpen, setTableMenuOpen] = useState(false);
@@ -485,9 +490,16 @@ function FormatBar({
       <ToolbarButton
         onClick={onAddBlockMath}
         isActive={editor.isActive("blockMath")}
-        title="Block Math"
+        title={`Block Math (${blockMathShortcutLabel()})`}
       >
         <BlockMathIcon className="w-4.5 h-4.5 stroke-[1.5]" />
+      </ToolbarButton>
+      <ToolbarButton
+        onClick={onAddInlineMath}
+        isActive={editor.isActive("inlineMath")}
+        title={`Inline Math (${inlineMathShortcutLabel()})`}
+      >
+        <InlineMathIcon className="w-4.5 h-4.5 stroke-[1.5]" />
       </ToolbarButton>
       <ToolbarButton
         onClick={() => editor.chain().focus().setHorizontalRule().run()}
@@ -3142,6 +3154,7 @@ export function Editor({
           editor={editor}
           onAddLink={handleAddLink}
           onAddBlockMath={handleAddBlockMath}
+          onAddInlineMath={handleAddInlineMath}
           onAddImage={handleAddImage}
         />
       </div>
