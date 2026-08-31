@@ -54,7 +54,10 @@ for (let digit = 0; digit <= 9; digit++) {
   US_CODE[String(digit)] = `Digit${digit}`;
 }
 
-export function keyIs(e: KeyboardEvent, key: string): boolean {
+export function keyIs(
+  e: Pick<KeyboardEvent, "key" | "code">,
+  key: string,
+): boolean {
   if (key.length > 1) {
     return e.key === key;
   }

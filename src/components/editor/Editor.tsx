@@ -27,6 +27,7 @@ import { CodeBlockView } from "./CodeBlockView";
 import { Extension, InputRule } from "@tiptap/core";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import {
+  type EditorState,
   NodeSelection,
   Plugin,
   PluginKey,
@@ -46,6 +47,10 @@ import {
   DocumentSaveQueue,
 } from "../../lib/editorDocument";
 import { exportFileStem } from "../../lib/exportFilename";
+import {
+  mathShortcutAction,
+  type MathShortcutAction,
+} from "../../lib/mathShortcuts";
 
 // Prepend https:// if no protocol is present
 function normalizeUrl(url: string): string {
@@ -212,6 +217,54 @@ function getMathNodeRect(
     y: top,
     toJSON: () => ({}),
   } as DOMRect;
+}
+
+type MathNodeTarget = {
+  type: "inlineMath" | "blockMath";
+  pos: number;
+  node: ProseMirrorNode;
+};
+
+function mathNodeAtSelection(state: EditorState): MathNodeTarget | null {
+  const { selection, doc } = state;
+  const { from, to, empty, $from } = selection;
+  const mathType = (node: ProseMirrorNode | null | undefined) =>
+    node?.type.name === "inlineMath" || node?.type.name === "blockMath"
+      ? node.type.name
+      : null;
+
+  if (selection instanceof NodeSelection) {
+    const type = mathType(selection.node);
+    if (type) return { type, pos: from, node: selection.node };
+  }
+
+  if (!empty) {
+    const selectedNode = doc.nodeAt(from);
+    const type = mathType(selectedNode);
+    if (type && selectedNode && from + selectedNode.nodeSize === to) {
+      return { type, pos: from, node: selectedNode };
+    }
+  }
+
+  if (empty) {
+    const nodeBefore = $from.nodeBefore;
+    const beforeType = mathType(nodeBefore);
+    if (beforeType && nodeBefore) {
+      return {
+        type: beforeType,
+        pos: from - nodeBefore.nodeSize,
+        node: nodeBefore,
+      };
+    }
+
+    const nodeAfter = $from.nodeAfter;
+    const afterType = mathType(nodeAfter);
+    if (afterType && nodeAfter) {
+      return { type: afterType, pos: from, node: nodeAfter };
+    }
+  }
+
+  return null;
 }
 
 const CARET_SCROLL_THRESHOLD_PX = 24;
@@ -1157,38 +1210,12 @@ export function Editor({
       linkPopupRef.current = null;
     }
     const { selection, doc } = currentEditor.state;
-    const { from, to, empty, $from } = selection;
+    const { from, to, empty } = selection;
+    const target = mathNodeAtSelection(currentEditor.state);
 
-    if (
-      selection instanceof NodeSelection &&
-      selection.node.type.name === "blockMath"
-    ) {
-      handleEditBlockMath(from);
+    if (target?.type === "blockMath") {
+      handleEditBlockMath(target.pos);
       return;
-    }
-
-    if (!empty) {
-      const selectedNode = doc.nodeAt(from);
-      if (
-        selectedNode?.type.name === "blockMath" &&
-        from + selectedNode.nodeSize === to
-      ) {
-        handleEditBlockMath(from);
-        return;
-      }
-    }
-
-    if (empty) {
-      const nodeBefore = $from.nodeBefore;
-      if (nodeBefore?.type.name === "blockMath") {
-        handleEditBlockMath(from - nodeBefore.nodeSize);
-        return;
-      }
-      const nodeAfter = $from.nodeAfter;
-      if (nodeAfter?.type.name === "blockMath") {
-        handleEditBlockMath(from);
-        return;
-      }
     }
 
     const selectedText = empty ? "" : doc.textBetween(from, to, "\n");
@@ -1306,38 +1333,12 @@ export function Editor({
     }
 
     const { selection, doc } = currentEditor.state;
-    const { from, to, empty, $from } = selection;
+    const { from, to, empty } = selection;
+    const target = mathNodeAtSelection(currentEditor.state);
 
-    if (
-      selection instanceof NodeSelection &&
-      selection.node.type.name === "inlineMath"
-    ) {
-      handleEditInlineMath(from);
+    if (target?.type === "inlineMath") {
+      handleEditInlineMath(target.pos);
       return;
-    }
-
-    if (!empty) {
-      const selectedNode = doc.nodeAt(from);
-      if (
-        selectedNode?.type.name === "inlineMath" &&
-        from + selectedNode.nodeSize === to
-      ) {
-        handleEditInlineMath(from);
-        return;
-      }
-    }
-
-    if (empty) {
-      const nodeBefore = $from.nodeBefore;
-      if (nodeBefore?.type.name === "inlineMath") {
-        handleEditInlineMath(from - nodeBefore.nodeSize);
-        return;
-      }
-      const nodeAfter = $from.nodeAfter;
-      if (nodeAfter?.type.name === "inlineMath") {
-        handleEditInlineMath(from);
-        return;
-      }
     }
 
     const selectedText = empty ? "" : doc.textBetween(from, to, "\n");
@@ -1406,6 +1407,50 @@ export function Editor({
       },
     );
   }, [closeMathPopup, handleEditInlineMath, openMathPopup]);
+
+  const handleConvertMathNode = useCallback((target: MathNodeTarget) => {
+    const currentEditor = editorRef.current;
+    if (!currentEditor) return;
+
+    const nextType =
+      target.type === "inlineMath" ? "blockMath" : "inlineMath";
+    const latex = String(target.node.attrs.latex ?? "");
+
+    currentEditor
+      .chain()
+      .focus()
+      .insertContentAt(
+        { from: target.pos, to: target.pos + target.node.nodeSize },
+        { type: nextType, attrs: { latex } },
+      )
+      .command(({ tr, dispatch }) => {
+        if (!dispatch) return true;
+        tr.setSelection(TextSelection.near(tr.selection.$to, 1));
+        tr.scrollIntoView();
+        return true;
+      })
+      .run();
+  }, []);
+
+  const handleMathShortcut = useCallback(
+    (action: MathShortcutAction) => {
+      const currentEditor = editorRef.current;
+      if (!currentEditor) return;
+
+      if (action === "block") {
+        handleAddBlockMath();
+        return;
+      }
+
+      const target = mathNodeAtSelection(currentEditor.state);
+      if (target) {
+        handleConvertMathNode(target);
+      } else {
+        handleAddInlineMath();
+      }
+    },
+    [handleAddBlockMath, handleAddInlineMath, handleConvertMathNode],
+  );
 
   const editor = useEditor({
     textDirection,
@@ -2364,6 +2409,24 @@ export function Editor({
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [handleAddLink, editor]);
+
+  // Math shortcuts are editor-scoped so both rich-editor hosts share the behavior.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!editor || !(e.target as HTMLElement).closest?.(".ProseMirror")) {
+        return;
+      }
+
+      const action = mathShortcutAction(e);
+      if (!action) return;
+
+      e.preventDefault();
+      handleMathShortcut(action);
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [editor, handleMathShortcut]);
 
   // Keyboard shortcut for Cmd+Shift+C to open copy menu
   useEffect(() => {

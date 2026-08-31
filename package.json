@@ -10,6 +10,7 @@
     "test:appshell": "esbuild tests/appShell.test.ts --bundle --platform=node --format=esm --outfile=dist/appShell.test.mjs && node dist/appShell.test.mjs",
     "test:draftlifecycle": "esbuild tests/draftLifecycle.test.ts --bundle --platform=node --format=esm --outfile=dist/draftLifecycle.test.mjs && node dist/draftLifecycle.test.mjs",
     "test:exportfilename": "esbuild tests/exportFilename.test.ts --bundle --platform=node --format=esm --outfile=dist/exportFilename.test.mjs && node dist/exportFilename.test.mjs",
+    "test:mathshortcuts": "esbuild tests/mathShortcuts.test.ts --bundle --platform=node --format=esm --outfile=dist/mathShortcuts.test.mjs && node dist/mathShortcuts.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },
