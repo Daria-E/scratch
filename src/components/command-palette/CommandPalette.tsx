@@ -23,6 +23,7 @@ import {
   markdownFromEditor,
   parentDirectory,
 } from "../../lib/editorMarkdown";
+import { exportFileStem } from "../../lib/exportFilename";
 import type { Note, Settings } from "../../types/note";
 import type { Editor } from "@tiptap/react";
 import {
@@ -83,7 +84,7 @@ interface CommandPaletteProps {
   editorRef?: React.RefObject<Editor | null>;
   onLeaveNotes?: () => void;
   returnToDocument?: boolean;
-  previewNote?: Note | null;
+  previewNote?: (Note & { isDraft: boolean | null }) | null;
   onNewDocument?: () => void;
   onOpenFileDialog?: () => void;
   onOpenNotes?: () => void;
@@ -109,6 +110,7 @@ export function CommandPalette({
   const gitCtx = useOptionalGit();
   const notes = notesCtx?.notes ?? [];
   const currentNote = notesCtx ? notesCtx.currentNote : (previewNote ?? null);
+  const isDraftForExport = notesCtx ? false : (previewNote?.isDraft ?? true);
   const notesFolder = notesCtx?.notesFolder ?? null;
   const { setTheme } = useTheme();
   const status = gitCtx?.status ?? null;
@@ -409,9 +411,14 @@ export function CommandPalette({
                   editorRef?.current,
                   currentNote?.path ? parentDirectory(currentNote.path) : undefined
                 ) || currentNote.content;
+              const defaultStem = exportFileStem({
+                path: currentNote.path,
+                title: currentNote.title,
+                isDraft: isDraftForExport,
+              });
               const saved = await exportTypesetPdf(
                 markdown,
-                currentNote.title,
+                defaultStem,
                 currentNote.path
               );
               if (saved) {
@@ -436,7 +443,7 @@ export function CommandPalette({
                 toast.error("Editor not available");
                 return;
               }
-              await downloadPdf(editorRef.current, currentNote.title);
+              await downloadPdf(editorRef.current);
               // Note: window.print() opens the print dialog but doesn't wait for user action
               // No success toast needed - the print dialog provides its own feedback
               onClose();
@@ -461,7 +468,12 @@ export function CommandPalette({
                   editorRef?.current,
                   currentNote?.path ? parentDirectory(currentNote.path) : undefined
                 ) || currentNote.content;
-              const saved = await downloadMarkdown(markdown, currentNote.title);
+              const defaultStem = exportFileStem({
+                path: currentNote.path,
+                title: currentNote.title,
+                isDraft: isDraftForExport,
+              });
+              const saved = await downloadMarkdown(markdown, defaultStem);
               if (saved) {
                 toast.success("Markdown saved successfully");
                 onClose();
@@ -613,6 +625,7 @@ export function CommandPalette({
     notesCtx,
     gitCtx,
     currentNote,
+    isDraftForExport,
     onClose,
     onOpenSettings,
     onOpenAiModal,

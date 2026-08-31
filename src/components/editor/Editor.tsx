@@ -45,6 +45,7 @@ import {
   currentDocumentIsEmpty,
   DocumentSaveQueue,
 } from "../../lib/editorDocument";
+import { exportFileStem } from "../../lib/exportFilename";
 
 // Prepend https:// if no protocol is present
 function normalizeUrl(url: string): string {
@@ -502,6 +503,7 @@ export interface PreviewModeData {
   modified: number;
   hasExternalChanges: boolean;
   reloadVersion: number;
+  isDraft: boolean | null;
   save: (content: string) => Promise<void>;
   reload: () => Promise<void>;
 }
@@ -635,6 +637,9 @@ export function Editor({
   const documentBaseDir = previewMode
     ? parentDirectory(previewMode.filePath)
     : (notesCtx?.notesFolder ?? null);
+  const isDraftForExport = previewMode
+    ? (previewMode.isDraft ?? true)
+    : false;
   const [isSaving, setIsSaving] = useState(false);
   const [hasPendingChanges, setHasPendingChanges] = useState(false);
   const [saveQueue] = useState(() => new DocumentSaveQueue());
@@ -2474,7 +2479,7 @@ export function Editor({
   const handleDownloadPdf = useCallback(async () => {
     if (!editor || !currentNote) return;
     try {
-      await downloadPdf(editor, currentNote.title);
+      await downloadPdf(editor);
     } catch (error) {
       console.error("Failed to open print dialog:", error);
       toast.error("Failed to open print dialog");
@@ -2492,9 +2497,14 @@ export function Editor({
     if (!editor || !currentNote) return;
     try {
       const markdown = getMarkdown(editor);
+      const defaultStem = exportFileStem({
+        path: currentNote.path,
+        title: currentNote.title,
+        isDraft: isDraftForExport,
+      });
       const saved = await exportTypesetPdf(
         markdown,
-        currentNote.title,
+        defaultStem,
         currentNote.path
       );
       if (saved) {
@@ -2506,13 +2516,18 @@ export function Editor({
         typeof error === "string" ? error : "Failed to export PDF"
       );
     }
-  }, [editor, currentNote, getMarkdown]);
+  }, [editor, currentNote, getMarkdown, isDraftForExport]);
 
   const handleDownloadMarkdown = useCallback(async () => {
     if (!editor || !currentNote) return;
     try {
       const markdown = getMarkdown(editor);
-      const saved = await downloadMarkdown(markdown, currentNote.title);
+      const defaultStem = exportFileStem({
+        path: currentNote.path,
+        title: currentNote.title,
+        isDraft: isDraftForExport,
+      });
+      const saved = await downloadMarkdown(markdown, defaultStem);
       if (saved) {
         toast.success("Markdown saved successfully");
       }
@@ -2520,7 +2535,7 @@ export function Editor({
       console.error("Failed to download markdown:", error);
       toast.error("Failed to save markdown");
     }
-  }, [editor, currentNote, getMarkdown]);
+  }, [editor, currentNote, getMarkdown, isDraftForExport]);
 
   // Toggle source mode — computes anchor data and toggles state;
   // focus/scroll restoration happens in the useLayoutEffect below.

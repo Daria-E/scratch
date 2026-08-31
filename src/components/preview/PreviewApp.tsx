@@ -512,6 +512,7 @@ export function PreviewApp({
     modified,
     hasExternalChanges,
     reloadVersion,
+    isDraft,
     save,
     reload,
   };
@@ -570,6 +571,7 @@ export function PreviewApp({
           content,
           path: filePath,
           modified,
+          isDraft,
         }
       : null;
 

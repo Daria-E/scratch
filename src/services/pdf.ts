@@ -9,7 +9,6 @@ import type { ExportPreset, TemplateImport } from "../types/note";
  * Uses the browser's native print functionality which produces high-quality PDFs.
  *
  * @param editor - The TipTap editor instance
- * @param _noteTitle - The note title (currently unused, but kept for API consistency)
  */
 function afterOverlaysRepaint(): Promise<void> {
   return new Promise((resolve) =>
@@ -17,10 +16,7 @@ function afterOverlaysRepaint(): Promise<void> {
   );
 }
 
-export async function downloadPdf(
-  editor: Editor,
-  _noteTitle: string
-): Promise<void> {
+export async function downloadPdf(editor: Editor): Promise<void> {
   if (!editor) throw new Error("Editor not available");
 
   await afterOverlaysRepaint();
@@ -31,18 +27,15 @@ export async function downloadPdf(
  * Downloads the markdown content as a .md file.
  *
  * @param markdown - The markdown content to save
- * @param noteTitle - The note title for the default filename
  * @returns Promise<boolean> - Returns true if file was saved successfully, false if user cancelled
  */
 export async function downloadMarkdown(
   markdown: string,
-  noteTitle: string
+  defaultStem: string
 ): Promise<boolean> {
-  const sanitizedTitle = sanitizeFilename(noteTitle);
-
   // Show native save dialog
   const filePath = await save({
-    defaultPath: `${sanitizedTitle}.md`,
+    defaultPath: `${defaultStem}.md`,
     filters: [{ name: "Markdown", extensions: ["md"] }],
   });
 
@@ -63,17 +56,16 @@ export async function downloadMarkdown(
  * Typesets the markdown to PDF via the Typst backend.
  *
  * @param markdown - The markdown content to typeset
- * @param noteTitle - The note title for the default filename
  * @param notePath - Path of the source note, used to resolve relative image paths
  * @returns Promise<boolean> - Returns true if the PDF was written, false if user cancelled
  */
 export async function exportTypesetPdf(
   markdown: string,
-  noteTitle: string,
+  defaultStem: string,
   notePath?: string
 ): Promise<boolean> {
   const filePath = await save({
-    defaultPath: `${sanitizeFilename(noteTitle)}.pdf`,
+    defaultPath: `${defaultStem}.pdf`,
     filters: [{ name: "PDF", extensions: ["pdf"] }],
   });
 
@@ -82,17 +74,6 @@ export async function exportTypesetPdf(
   await invoke("export_pdf", { markdown, path: filePath, notePath });
 
   return true;
-}
-
-/**
- * Sanitizes a filename by removing invalid characters.
- * Replaces filesystem-unsafe characters with dashes.
- *
- * @param name - The filename to sanitize
- * @returns A filesystem-safe filename
- */
-function sanitizeFilename(name: string): string {
-  return name.replace(/[/\\?%*:|"<>]/g, "-").trim() || "note";
 }
 
 export async function listExportFonts(): Promise<string[]> {
