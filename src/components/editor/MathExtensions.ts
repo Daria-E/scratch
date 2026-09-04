@@ -2,6 +2,7 @@ import { InputRule } from "@tiptap/core";
 import { BlockMath, InlineMath } from "@tiptap/extension-mathematics";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { NodeSelection, Plugin, PluginKey } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
 // Standard number-field shortcuts for KaTeX (shared by nodes and the popup).
 export const katexMacros: Record<string, string> = {
@@ -24,12 +25,41 @@ export function normalizeInlineMath(value: string): string {
   return (match?.[1] ?? trimmed).trim();
 }
 
+// A line with `dir="auto"` takes its direction from its first strong character.
+// KaTeX renders Latin letters, so math at the start of an RTL line would flip
+// the whole line to LTR. HTML's auto-directionality skips text inside
+// descendants that carry their own `dir`, so tagging the node keeps the formula
+// out of that decision — and keeps the formula itself rendering LTR.
+function mathDirectionDecorations(
+  doc: ProseMirrorNode,
+  typeName: string,
+): DecorationSet {
+  const decorations: Decoration[] = [];
+
+  doc.descendants((node, pos) => {
+    if (node.type.name !== typeName) return true;
+    decorations.push(Decoration.node(pos, pos + node.nodeSize, { dir: "ltr" }));
+    return false;
+  });
+
+  return DecorationSet.create(doc, decorations);
+}
+
 function createMathSelectionPlugin(
   typeName: "blockMath" | "inlineMath",
   onClick?: (node: ProseMirrorNode, pos: number) => void,
 ) {
-  return new Plugin({
-    key: new PluginKey(`${typeName}Selection`),
+  const key = new PluginKey<DecorationSet>(`${typeName}Selection`);
+
+  return new Plugin<DecorationSet>({
+    key,
+    state: {
+      init: (_config, state) => mathDirectionDecorations(state.doc, typeName),
+      apply: (tr, decorations) =>
+        tr.docChanged
+          ? mathDirectionDecorations(tr.doc, typeName)
+          : decorations,
+    },
     view() {
       return {
         // Clear native DOM selection when a math node is selected.
@@ -47,6 +77,8 @@ function createMathSelectionPlugin(
       };
     },
     props: {
+      decorations: (state) => key.getState(state),
+
       // Open the editor on Enter or Space when a math node is selected.
       handleKeyDown(view, event) {
         if (event.key !== "Enter" && event.key !== " ") return false;

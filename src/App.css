@@ -316,6 +316,19 @@ html.dark {
   margin-right: auto;
 }
 
+/* ProseMirror appends a separator image and a trailing break inside any block
+   that ends in an atom node (inline math, for instance) so the caret has
+   somewhere to sit. Tailwind's preflight makes every img display:block, which
+   turns that separator into a line of its own and drops the caret onto a
+   phantom line below the text. */
+.ProseMirror img.ProseMirror-separator {
+  display: inline !important;
+  border: none !important;
+  margin: 0 !important;
+  width: 1px !important;
+  height: 1px !important;
+}
+
 /* Editor font customization - simplified */
 .prose {
   font-family: var(--editor-font-family);
