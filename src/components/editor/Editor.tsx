@@ -25,7 +25,7 @@ import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { lowlight } from "./lowlight";
 import { CodeBlockView } from "./CodeBlockView";
 import { Extension, InputRule } from "@tiptap/core";
-import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import {
   type EditorState,
   NodeSelection,
@@ -271,8 +271,140 @@ function mathNodeAtSelection(state: EditorState): MathNodeTarget | null {
   return null;
 }
 
-const CARET_SCROLL_THRESHOLD_PX = 24;
-const CARET_SCROLL_MARGIN_PX = 72;
+// Caret scrolling.
+//
+// Browser caret measurement is unreliable at bidi boundaries and around
+// trailing spaces: the collapsed range reports no client rects, and the
+// fallback covers the whole text node, so a paragraph-sized rect arrives in
+// place of a caret-sized one. Scrolling on those measurements is what makes an
+// RTL line jump on every keystroke. So: only scroll on a rect that is
+// plausibly caret-sized, only once the caret leaves the comfortable band, and
+// always leave a margin so the caret never sits flush against an edge.
+const CARET_EDGE_Y_PX = 48;
+const CARET_MARGIN_Y_PX = 96;
+const CARET_EDGE_X_PX = 24;
+const CARET_MARGIN_X_PX = 48;
+// A rect taller than this many lines is a failed measurement, not a caret.
+const CARET_MAX_LINES = 2.5;
+const CARET_FALLBACK_LINE_HEIGHT_PX = 24;
+
+type CaretRect = { top: number; bottom: number; left: number; right: number };
+
+function caretMaxHeight(view: EditorView, pos: number): number {
+  const { node } = view.domAtPos(pos);
+  const element = node instanceof Element ? node : node.parentElement;
+  const lineHeight = element
+    ? parseFloat(getComputedStyle(element).lineHeight)
+    : NaN;
+  const line = Number.isFinite(lineHeight)
+    ? lineHeight
+    : CARET_FALLBACK_LINE_HEIGHT_PX;
+  return line * CARET_MAX_LINES;
+}
+
+// Caret rect, or null when the browser's measurement can't be trusted.
+function measureCaret(view: EditorView): CaretRect | null {
+  const { selection } = view.state;
+
+  if (selection instanceof NodeSelection) {
+    const dom = view.nodeDOM(selection.from);
+    return dom instanceof HTMLElement ? dom.getBoundingClientRect() : null;
+  }
+
+  const pos = selection.head;
+  const maxHeight = caretMaxHeight(view, pos);
+  // -1 first: after typing, the caret belongs to the character before it, the
+  // side that resolves correctly at a bidi or line-wrap boundary.
+  for (const side of [-1, 1]) {
+    try {
+      const coords = view.coordsAtPos(pos, side);
+      const height = coords.bottom - coords.top;
+      if (height > 0 && height <= maxHeight) return coords;
+    } catch {
+      // Position isn't rendered yet.
+    }
+  }
+
+  return null;
+}
+
+// Smallest scroll that puts the caret back inside the element's comfortable
+// band. Returns the caret rect shifted by how far the element actually moved,
+// so the next ancestor sees current coordinates.
+function nudgeCaretIntoView(element: HTMLElement, caret: CaretRect): CaretRect {
+  const bounds = element.getBoundingClientRect();
+  let deltaY = 0;
+  let deltaX = 0;
+
+  if (element.scrollHeight > element.clientHeight) {
+    // Margins are clamped so a short viewport can't land the caret outside the
+    // opposite edge band, which would scroll it back on the next keystroke.
+    const margin = Math.min(CARET_MARGIN_Y_PX, element.clientHeight / 3);
+    const edge = Math.min(CARET_EDGE_Y_PX, margin);
+    const top = bounds.top;
+    const bottom = bounds.top + element.clientHeight;
+    if (caret.top < top + edge) {
+      deltaY = caret.top - top - margin;
+    } else if (caret.bottom > bottom - edge) {
+      deltaY = caret.bottom - bottom + margin;
+    }
+  }
+
+  if (element.scrollWidth > element.clientWidth) {
+    const margin = Math.min(CARET_MARGIN_X_PX, element.clientWidth / 3);
+    const edge = Math.min(CARET_EDGE_X_PX, margin);
+    const left = bounds.left;
+    const right = bounds.left + element.clientWidth;
+    if (caret.left < left + edge) {
+      deltaX = caret.left - left - margin;
+    } else if (caret.right > right - edge) {
+      deltaX = caret.right - right + margin;
+    }
+  }
+
+  if (!deltaY && !deltaX) return caret;
+
+  const startTop = element.scrollTop;
+  const startLeft = element.scrollLeft;
+  if (deltaY) element.scrollTop += deltaY;
+  if (deltaX) element.scrollLeft += deltaX;
+  const movedY = element.scrollTop - startTop;
+  const movedX = element.scrollLeft - startLeft;
+
+  return {
+    top: caret.top - movedY,
+    bottom: caret.bottom - movedY,
+    left: caret.left - movedX,
+    right: caret.right - movedX,
+  };
+}
+
+// Replaces ProseMirror's own scroll-into-view for the editor.
+function scrollCaretIntoView(
+  view: EditorView,
+  container: HTMLElement | null,
+): boolean {
+  if (!container) return false;
+
+  const caret = measureCaret(view);
+  // A bad measurement is worse than none: the caret was visible a keystroke
+  // ago, so leave the scroll position alone rather than jump to a guess.
+  if (!caret) return true;
+
+  const { node } = view.domAtPos(view.state.selection.head);
+  const start = node instanceof HTMLElement ? node : node.parentElement;
+
+  let rect = caret;
+  let element: HTMLElement | null =
+    start && container.contains(start) ? start : container;
+  while (element) {
+    rect = nudgeCaretIntoView(element, rect);
+    if (element === container) break;
+    element = element.parentElement;
+  }
+
+  return true;
+}
 
 // Search highlight extension - adds yellow backgrounds to search matches
 const searchHighlightPluginKey = new PluginKey("searchHighlight");
@@ -1565,8 +1697,8 @@ export function Editor({
       }),
     ],
     editorProps: {
-      scrollThreshold: CARET_SCROLL_THRESHOLD_PX,
-      scrollMargin: CARET_SCROLL_MARGIN_PX,
+      handleScrollToSelection: (view) =>
+        scrollCaretIntoView(view, scrollContainerRef.current),
       attributes: {
         class:
           "prose prose-lg dark:prose-invert max-w-3xl mx-auto focus:outline-none min-h-full px-6 pt-8 pb-24",
